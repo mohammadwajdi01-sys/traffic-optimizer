@@ -50,6 +50,22 @@ try {
     (await call("/analysis", { user: "guest-x", role: "guest" })).status,
     429,
   );
+  const allowance = await call("/allowance", {
+    user: "guest-x",
+    role: "guest",
+  });
+  assert.deepEqual(allowance.body, { used: 1, limit: 1, remaining: 0 });
+  for (let i = 0; i < 3; i++) {
+    assert.deepEqual(
+      (await call("/allowance", { user: "user-x", role: "user" })).body,
+      { used: 0, limit: 10, remaining: 10 },
+    );
+  }
+  await call("/analysis", { user: "user-x", role: "user" });
+  assert.equal(
+    (await call("/allowance", { user: "user-x", role: "user" })).body.remaining,
+    9,
+  );
   await call("/update", { provider: "mapbox", hard: 6, paid: false });
   assert.equal((await call("/reserve", { provider: "mapbox" })).status, 429);
   await call("/update", { paid: true, monthlyBudget: 0 });

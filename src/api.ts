@@ -1,6 +1,14 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { AppConfig } from "../shared/types";
 export let supabase: SupabaseClient | null = null;
+export class ApiFailure extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 export function configureAuth(c: AppConfig) {
   if (c.supabaseUrl && c.supabaseKey && !supabase)
     supabase = createClient(c.supabaseUrl, c.supabaseKey);
@@ -24,7 +32,8 @@ export async function api<T>(
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const json = (await res.json()) as any;
-  if (!res.ok) throw new Error(json.error ?? "Request failed.");
+  if (!res.ok)
+    throw new ApiFailure(res.status, json.error ?? "Request failed.");
   return json;
 }
 export function navUrl(

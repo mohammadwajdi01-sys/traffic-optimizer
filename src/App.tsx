@@ -46,9 +46,10 @@ import {
   localDate,
   localInstant,
 } from "../shared/time";
-import { api, configureAuth, navUrl, supabase } from "./api";
+import { api, ApiFailure, configureAuth, navUrl, supabase } from "./api";
 import { useStore } from "./store";
-import { en, ar } from "./i18n";
+import { en, ar, forecastWarning } from "./i18n";
+import { weeklyPlans } from "../shared/planning";
 import GuestAccess from "./GuestAccess";
 import { LocationField } from "./LocationField";
 import { MapPreview } from "./MapPreview";
@@ -332,6 +333,11 @@ export default function App() {
     }
   }
   async function runWeek() {
+    if (!demo && !user) {
+      setError(t.signinForWeek);
+      setAuthOpen(true);
+      return;
+    }
     if (!origin || !destination) {
       setError(t.locationMissing);
       return;
@@ -349,9 +355,30 @@ export default function App() {
     };
     setPlan(p);
     try {
+      const days = weeklyPlans(p);
+      const count = days.filter(Boolean).length;
+      if (!count) {
+        setError(t.weekHorizon);
+        return;
+      }
+      if (!demo) {
+        const allowance = await api<{ remaining: number }>(
+          "/api/analysis/allowance",
+        );
+        if (allowance.remaining < count) {
+          setError(t.weekAllowance);
+          return;
+        }
+      }
+      if (count < 7) setNotice(t.weekHorizon);
       for (let i = 0; i < 7; i++) {
         setWeekProgress(i + 1);
-        const day = { ...p, date: addDays(p.date, i) };
+        const day = days[i];
+        if (!day) {
+          list.push(null);
+          setWeekly([...list]);
+          continue;
+        }
         try {
           list.push(
             demo
@@ -361,9 +388,19 @@ export default function App() {
         } catch (e) {
           list.push(null);
           setError(locale === "ar" ? t.error : (e as Error).message);
+          if (
+            e instanceof ApiFailure &&
+            [401, 403, 429, 503].includes(e.status)
+          ) {
+            while (list.length < 7) list.push(null);
+            setWeekly([...list]);
+            break;
+          }
         }
         setWeekly([...list]);
       }
+    } catch (e) {
+      setError(locale === "ar" ? t.error : (e as Error).message);
     } finally {
       setBusy(false);
       setWeekProgress(0);
@@ -558,7 +595,7 @@ export default function App() {
         <summary>{t.warning}</summary>
         <p>{t.windowHelp}</p>
         {analysis.warnings.map((w, i) => (
-          <p key={i}>{locale === "ar" ? t.quality : w}</p>
+          <p key={i}>{forecastWarning(w, locale)}</p>
         ))}
         <p>
           {new Date(analysis.createdAt).toLocaleString(locale)} ·{" "}
@@ -1580,6 +1617,25 @@ export default function App() {
             <Dialog.Close className="dialog-close" aria-label={t.close}>
               <X size={20} />
             </Dialog.Close>
+            {config.authConfigured && config.googleAuthEnabled && (
+              <button
+                className="button primary full"
+                type="button"
+                onClick={async () => {
+                  try {
+                    const { error } = await supabase!.auth.signInWithOAuth({
+                      provider: "google",
+                      options: { redirectTo: location.origin + "/settings" },
+                    });
+                    if (error) throw error;
+                  } catch (err) {
+                    setError((err as Error).message);
+                  }
+                }}
+              >
+                {t.signinGoogle}
+              </button>
+            )}
             {config.authConfigured && (
               <form
                 onSubmit={async (e) => {

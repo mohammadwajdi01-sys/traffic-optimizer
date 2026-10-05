@@ -1,28 +1,26 @@
-# Traffic Optimizer — continuation status, 6 October 2026
+# Traffic Optimizer continuation — 6 October 2026
 
 Hosted beta: https://traffic-optimizer.mohammadwajdi01.workers.dev/
 Repository: https://github.com/mohammadwajdi01-sys/traffic-optimizer
 
-The saved build archive has been recovered and its local checks pass: TypeScript, 30 unit/interface tests, database authorization/isolation, frontend build, Worker bundle and real Durable Object quota/security tests. This source is the recovered baseline, not the newer 38-test build reported in the old chat. No newer saved source or alternate GitHub branch was found.
+## Completed recovery
 
-GitHub owner access is available. Reconnection is unnecessary. Source publication is the first continuation task. See RECOVERY_STATUS.md for evidence and unresolved work.
+The saved v3 archive was recovered and the runnable source, migrations, lockfile, workflows and essential assets were published to main. The recovery CI revision 284b829 passed all baseline checks and nine Playwright cases across desktop, Pixel 7 and iPhone SE. Browser examples run against an isolated setup-mode Worker; production remains live.
 
-The owner already reported: Supabase URL settings saved; Cloudflare server key stored as a Secret; Google login provider enabled; owner email mohammadwajdi01@gmail.com. Preserve those settings and verify runtime behavior without asking for the same setup again. This baseline still implements email-link login, not the later reported Google login changes.
+The newer build described in the old chat was not present in the saved archive. The missing repairs have now been restored in this continuation:
 
-Paid usage and Google Routes fallback remain disabled. Google login is independent of the routing fallback.
+- Google OAuth is offered independently of Google Routes. Supabase auth settings were checked and Google login is enabled.
+- Server database calls accept either SUPABASE_SECRET_KEY or the existing SUPABASE_SERVICE_ROLE_KEY binding. Modern keys use apikey; legacy service-role JWTs also use Bearer authorization. Reminders recognize both names.
+- Live weekly analysis requires sign-in, checks remaining daily allowance before forecasting, preserves unavailable date positions, respects the complete seven-day travel window and stops after access/quota failures.
+- Server-side travel-window validation runs before charging an analysis allowance. Forecast warnings retain their distinct meaning in Arabic; reminders use the saved account language.
+- The confirmed owner account was promoted in Supabase. ADMIN_USER_IDS binds the same verified UUID; user-editable metadata never grants owner permissions.
 
-The original blueprint and design concepts remain in the saved Traffic-Optimizer-Build.zip and TRAFFIC_OPTIMIZER_COMPLETE_BLUEPRINT_v1.md; the runnable repository does not require the embedded design images.
+Local validation passes: TypeScript, 40 unit/interface tests, PGlite database authorization/isolation, frontend build, Worker bundle and real Durable Object quota/concurrency/security tests. The quota preflight is read-only; each actual analysis remains independently charged so concurrent tabs cannot bypass limits.
 
-Next: restore/reconcile reported OAuth, owner, weekly quota/horizon, Arabic and server-secret compatibility repairs; run CI; verify deployed configuration and real user journeys; then finish reminders, traffic coverage and phone/PWA acceptance.
+## Deployment and remaining acceptance
 
-## Verification limits
+This repair revision still needs its own GitHub CI and live deployment verification. Prior browser evidence covers synthetic examples, not real authentication, forecasts, notifications or installed-phone behavior. Real owner Google sign-in, redirect behavior, guest challenge, saved-route persistence, provider traffic coverage, reminders and phone/PWA acceptance remain pending until observed on the hosted repair.
 
-The baseline code has been re-tested locally. Browser download attempts failed with invalid/truncated ZIP responses, so browser tests have not been claimed as passing. Hosted authentication, reminders and provider traffic accuracy were not re-tested during source recovery. Historical evidence remains in HOSTED_VERIFICATION.md and RELEASE_STATUS.md.
+Paid provider requests and Google Routes fallback remain disabled. Provider hard limits were not increased. Existing secrets must be inherited when deploying; private values are not in the source.
 
-## Pending work
-
-- Publish and verify complete source, migrations, lockfile and workflows in GitHub.
-- Run GitHub CI including desktop and phone example journeys. Browser examples use an isolated setup-mode Wrangler environment; production mode remains live and no provider/account secrets enter CI.
-- Restore missing later repairs, preserving zero-paid-usage defaults and existing visual design.
-- Reconcile live configuration and deploy the tested revision.
-- Complete real guest/account/owner/reminder, traffic coverage, device and release acceptance.
+The original blueprint and generated design concepts remain in Traffic-Optimizer-Build.zip and TRAFFIC_OPTIMIZER_COMPLETE_BLUEPRINT_v1.md. Historical reports in the repository are evidence from the earlier run, not current acceptance claims.

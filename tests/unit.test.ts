@@ -1,4 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { liveWindow, weeklyPlans } from "../shared/planning";
+import { db } from "../worker/database";
+import type { Env } from "../worker/env";
+import { forecastWarning } from "../src/i18n";
+import { describe, it, expect, vi } from "vitest";
 import {
   feasible,
   optimize,
@@ -198,6 +202,124 @@ describe("Timezone and input validation", () => {
     expect(planSchema.safeParse({ ...p, timezone: "UTC" }).success).toBe(false);
     expect(planSchema.safeParse({ ...p, destination: p.origin }).success).toBe(
       false,
+    );
+  });
+});
+
+describe("Live weekly horizon", () => {
+  it("preserves seven positions while skipping the seventh date beyond the horizon", () => {
+    const days = weeklyPlans({ ...p, date: addDays(p.date, 1) }, now);
+    expect(days).toHaveLength(7);
+    expect(days.filter(Boolean)).toHaveLength(6);
+    expect(days[6]).toBeNull();
+  });
+  it("rejects a departure window extending beyond seven days even if its center is valid", () => {
+    const boundary = localInstant(p.date, "09:00", p.timezone);
+    expect(() =>
+      liveWindow(
+        {
+          ...p,
+          date: addDays(p.date, 7),
+          mode: "leave_around",
+          flexibilityMinutes: 30,
+        },
+        boundary,
+      ),
+    ).toThrow("seven days");
+  });
+  it("uses the actual avoid-traffic window rather than an unrelated arrival time", () => {
+    const boundary = localInstant(p.date, "09:00", p.timezone);
+    expect(() =>
+      liveWindow(
+        {
+          ...p,
+          date: addDays(p.date, 7),
+          mode: "avoid_traffic",
+          time: "01:00",
+          earliestTime: "08:00",
+          latestTime: "10:00",
+        },
+        boundary,
+      ),
+    ).toThrow("seven days");
+  });
+  it("keeps synthetic examples available for all seven dates", () => {
+    expect(
+      weeklyPlans({ ...p, date: addDays(p.date, 30), demo: true }, now).filter(
+        Boolean,
+      ),
+    ).toHaveLength(7);
+  });
+});
+
+describe("Server database key compatibility", () => {
+  const env = {
+    SUPABASE_URL: "https://example.supabase.co",
+    SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+  } as Env;
+  it.each([
+    [
+      { SUPABASE_SECRET_KEY: "sb_secret_modern" },
+      "sb_secret_modern",
+      undefined,
+    ],
+    [
+      { SUPABASE_SERVICE_ROLE_KEY: "sb_secret_alias" },
+      "sb_secret_alias",
+      undefined,
+    ],
+    [
+      { SUPABASE_SERVICE_ROLE_KEY: "eyJlegacy.jwt.signature" },
+      "eyJlegacy.jwt.signature",
+      "Bearer eyJlegacy.jwt.signature",
+    ],
+  ])(
+    "authorizes modern and legacy keys without confusing their formats",
+    async (binding, key, bearer) => {
+      const request = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(Response.json([]));
+      try {
+        await db({ ...env, ...binding }, "profiles", { service: true });
+        const headers = request.mock.calls[0][1]!.headers as Record<
+          string,
+          string
+        >;
+        expect(headers.apikey).toBe(key);
+        expect(headers.Authorization).toBe(bearer);
+      } finally {
+        request.mockRestore();
+      }
+    },
+  );
+  it("fails closed without a server key", async () => {
+    const request = vi.spyOn(globalThis, "fetch");
+    try {
+      await expect(
+        db(env, "profiles", { service: true }),
+      ).rejects.toMatchObject({ status: 503 });
+      expect(request).not.toHaveBeenCalled();
+    } finally {
+      request.mockRestore();
+    }
+  });
+});
+
+describe("Arabic forecast limitations", () => {
+  it("keeps coverage and sampling warnings distinct and preserves an unknown warning", () => {
+    const coverage = forecastWarning(
+      "Traffic coverage is unconfirmed for part of this journey.",
+      "ar",
+    );
+    const quota = forecastWarning(
+      "Request budget reached. These are the best options among tested departures.",
+      "ar",
+    );
+    expect(coverage).toContain("تغطية");
+    expect(quota).toContain("الطلبات");
+    expect(coverage).not.toEqual(quota);
+    expect(forecastWarning("New provider warning", "ar")).toBe(
+      "New provider warning",
     );
   });
 });

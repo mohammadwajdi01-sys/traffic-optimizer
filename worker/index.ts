@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { planSchema, routeSchema } from "../shared/schema";
 import { optimize } from "../shared/optimizer";
-import { localInstant } from "../shared/time";
+import { liveWindow } from "../shared/planning";
 import { ApiError, budget, type Env } from "./env";
 import { db, identity } from "./database";
 import { createForecast, remote } from "./providers";
@@ -58,6 +58,7 @@ async function api(request: Request, env: Env) {
     return reply({
       mode: env.APP_MODE === "live" ? "live" : "setup",
       authConfigured: Boolean(env.SUPABASE_URL && env.SUPABASE_PUBLISHABLE_KEY),
+      googleAuthEnabled: env.GOOGLE_AUTH_ENABLED === "true",
       searchConfigured: Boolean(env.GEOAPIFY_API_KEY),
       trafficConfigured: Boolean(env.MAPBOX_SERVER_TOKEN),
       mapConfigured: Boolean(env.MAPBOX_PUBLIC_TOKEN),
@@ -101,6 +102,10 @@ async function api(request: Request, env: Env) {
   );
   await budget(env, "/rate", { user: who.id });
   if (path === "/api/me") return reply({ id: who.id, role: who.role });
+  if (path === "/api/analysis/allowance" && request.method === "GET")
+    return reply(
+      await budget(env, "/allowance", { user: who.id, role: who.role }),
+    );
   if (path === "/api/map-token" && request.method === "GET") {
     if (!env.MAPBOX_PUBLIC_TOKEN)
       throw new ApiError(503, "The map is not configured yet.");
@@ -162,9 +167,13 @@ async function api(request: Request, env: Env) {
     if (p.demo) throw new ApiError(400, "Example forecasts run locally only.");
     if (env.APP_MODE !== "live")
       throw new ApiError(503, "Live forecasts are not activated yet.");
-    const target = localInstant(p.date, p.time, p.timezone);
-    if (target > Date.now() + 7 * 86400000)
-      throw new ApiError(400, "Plan a journey within the next seven days.");
+    if (path.endsWith("day")) {
+      try {
+        liveWindow(p);
+      } catch (error) {
+        throw new ApiError(400, (error as Error).message);
+      }
+    }
     await budget(env, "/analysis", { user: who.id, role: who.role });
     const forecast = await createForecast(
       env,

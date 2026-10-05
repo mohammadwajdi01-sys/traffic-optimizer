@@ -65,6 +65,7 @@ export type SavedRoute = {
 export type AppConfig = {
   mode: "setup" | "live";
   authConfigured: boolean;
+  googleAuthEnabled?: boolean;
   searchConfigured: boolean;
   trafficConfigured: boolean;
   mapConfigured: boolean;

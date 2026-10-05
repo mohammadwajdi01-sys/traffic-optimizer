@@ -4,9 +4,11 @@ export interface Env {
   APP_MODE?: string;
   PUBLIC_BETA?: string;
   GOOGLE_ENABLED?: string;
+  GOOGLE_AUTH_ENABLED?: string;
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
   SUPABASE_SECRET_KEY?: string;
+  SUPABASE_SERVICE_ROLE_KEY?: string;
   MAPBOX_PUBLIC_TOKEN?: string;
   MAPBOX_SERVER_TOKEN?: string;
   GEOAPIFY_API_KEY?: string;
@@ -18,6 +20,9 @@ export interface Env {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   VAPID_SUBJECT?: string;
+}
+export function serverKey(env: Env) {
+  return env.SUPABASE_SECRET_KEY || env.SUPABASE_SERVICE_ROLE_KEY;
 }
 export class ApiError extends Error {
   constructor(

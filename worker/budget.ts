@@ -125,13 +125,15 @@ export class BudgetLedger extends DurableObject<Env> {
         await tx.put("config", cfg);
         return reply(cfg);
       }
-      if (path === "/analysis") {
+      if (path === "/analysis" || path === "/allowance") {
         const key = `u:${day}:${data.user}`,
           used = (await tx.get<number>(key)) ?? 0;
         const limit =
           { guest: 1, user: 10, family: 30, admin: 100 }[
             data.role as "guest"
           ] ?? 1;
+        if (path === "/allowance")
+          return reply({ used, limit, remaining: Math.max(0, limit - used) });
         if (used >= limit)
           return reply(
             { error: "Your daily analysis allowance has been reached." },

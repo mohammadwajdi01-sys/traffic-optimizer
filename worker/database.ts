@@ -1,4 +1,4 @@
-import { ApiError, type Env } from "./env";
+import { ApiError, serverKey, type Env } from "./env";
 import { verifyGuestSession } from "./guest";
 export async function db(
   env: Env,
@@ -12,9 +12,7 @@ export async function db(
 ) {
   if (!env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY)
     throw new ApiError(503, "Accounts are not configured yet.");
-  const key = options.service
-    ? env.SUPABASE_SECRET_KEY
-    : env.SUPABASE_PUBLISHABLE_KEY;
+  const key = options.service ? serverKey(env) : env.SUPABASE_PUBLISHABLE_KEY;
   if (!key)
     throw new ApiError(503, "Database administration is not configured yet.");
   const headers: Record<string, string> = {
@@ -25,7 +23,9 @@ export async function db(
       : "return=representation",
   };
   if (options.token) headers.Authorization = `Bearer ${options.token}`;
-  // Modern secret keys are not JWTs. Supabase authorizes service calls through apikey.
+  else if (options.service && key.startsWith("eyJ"))
+    headers.Authorization = `Bearer ${key}`;
+  // Modern sb_secret keys use apikey only; legacy service_role JWTs also need Bearer.
   const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
     method: options.method ?? "GET",
     headers,

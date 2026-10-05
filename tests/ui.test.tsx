@@ -14,7 +14,16 @@ import App from "../src/App";
 import GuestAccess from "../src/GuestAccess";
 import { useStore } from "../src/store";
 import { defaultPlan } from "../shared/demo";
+const auth = vi.hoisted(() => ({
+  getSession: vi.fn(async () => ({ data: { session: null } })),
+  signInWithOAuth: vi.fn(async () => ({ error: null })),
+  onAuthStateChange: vi.fn(() => ({
+    data: { subscription: { unsubscribe: vi.fn() } },
+  })),
+}));
+vi.mock("@supabase/supabase-js", () => ({ createClient: () => ({ auth }) }));
 beforeEach(() => {
+  auth.signInWithOAuth.mockClear();
   localStorage.clear();
   history.replaceState(null, "", "/");
   useStore.getState().setLocale("en");
@@ -267,5 +276,44 @@ describe("Application interactions without service credentials", () => {
     await u.keyboard("{ArrowDown}{Enter}");
     expect(origin.getAttribute("aria-expanded")).toBe("false");
     expect((origin as HTMLInputElement).value).toContain("Khalda");
+  });
+});
+
+describe("Weekly sign-in and Google login", () => {
+  it("asks a guest to sign in before spending any weekly allowance", async () => {
+    history.replaceState(null, "", "/week");
+    const request = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        mode: "live",
+        authConfigured: true,
+        googleAuthEnabled: true,
+        supabaseUrl: "https://example.supabase.co",
+        supabaseKey: "sb_publishable_test",
+        publicBeta: true,
+        searchConfigured: false,
+        trafficConfigured: false,
+        mapConfigured: false,
+      }),
+    }));
+    vi.stubGlobal("fetch", request);
+    mount();
+    await waitFor(() => expect(auth.onAuthStateChange).toHaveBeenCalled());
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Analyze seven days" }));
+    await screen.findByRole("dialog");
+    expect(
+      request.mock.calls.some((args: unknown[]) =>
+        String(args[0]).includes("/api/analysis/"),
+      ),
+    ).toBe(false);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Continue with Google" }));
+    expect(auth.signInWithOAuth).toHaveBeenCalledWith({
+      provider: "google",
+      options: { redirectTo: location.origin + "/settings" },
+    });
   });
 });

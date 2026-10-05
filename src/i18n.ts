@@ -93,6 +93,13 @@ export const en = {
   arabic: "العربية",
   account: "Your account",
   signin: "Sign in",
+  signinGoogle: "Continue with Google",
+  signinForWeek:
+    "Sign in to analyze a week. Guest access includes one daily analysis.",
+  weekHorizon:
+    "Only future travel windows within the next seven days can be analyzed. Unavailable dates are left empty.",
+  weekAllowance:
+    "Your remaining daily allowance cannot cover these dates. Analyze an individual day or try again tomorrow.",
   signout: "Sign out",
   email: "Email address",
   sendLink: "Email a sign-in link",
@@ -297,6 +304,13 @@ export const ar: typeof en = {
   arabic: "العربية",
   account: "حسابك",
   signin: "تسجيل الدخول",
+  signinGoogle: "المتابعة باستخدام Google",
+  signinForWeek:
+    "سجل الدخول لتحليل أسبوع. يتيح وصول الضيف تحليلاً واحداً يومياً.",
+  weekHorizon:
+    "يمكن تحليل فترات السفر المستقبلية ضمن الأيام السبعة القادمة فقط. تُترك الأيام غير المتاحة فارغة.",
+  weekAllowance:
+    "رصيد التحليلات المتبقي اليوم لا يكفي لهذه الأيام. حلل يوماً واحداً أو حاول غداً.",
   signout: "تسجيل الخروج",
   email: "البريد الإلكتروني",
   sendLink: "أرسل رابط تسجيل الدخول",
@@ -410,3 +424,21 @@ export const ar: typeof en = {
     "السبت",
   ],
 };
+
+const arabicWarnings: Record<string, string> = {
+  "Request budget reached. These are the best options among tested departures.":
+    "تم بلوغ حد الطلبات. هذه أفضل الخيارات بين أوقات المغادرة التي اختُبرت.",
+  "Some forecasts were unavailable. Results cover the tested departures only.":
+    "تعذرت بعض التوقعات. تشمل النتائج أوقات المغادرة التي اختُبرت فقط.",
+  "No tested departure meets your arrival constraints. Increase the window or reduce the buffer.":
+    "لا يحقق أي وقت مغادرة مختبَر شروط وصولك. وسّع الفترة أو قلل هامش الأمان.",
+  "Providers returned different route estimates. Compare these as separate journey options.":
+    "قدّم المزودون تقديرات لمسارات مختلفة. قارنها كخيارات سفر منفصلة.",
+  "A no-traffic baseline is unavailable. Minimum driving time is shown instead of a congestion claim.":
+    "لا يتوفر تقدير دون ازدحام. يُعرض أقل وقت قيادة بدلاً من تقدير الازدحام.",
+  "Traffic coverage is unconfirmed for part of this journey.":
+    "تغطية بيانات الازدحام غير مؤكدة لجزء من هذه الرحلة.",
+};
+export function forecastWarning(warning: string, locale: "en" | "ar") {
+  return locale === "ar" ? (arabicWarnings[warning] ?? warning) : warning;
+}

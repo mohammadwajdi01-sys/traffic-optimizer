@@ -1,6 +1,6 @@
 import { buildPushPayload } from "@block65/webcrypto-web-push";
 import { db } from "./database";
-import { budget, type Env } from "./env";
+import { budget, serverKey, type Env } from "./env";
 import { createForecast } from "./providers";
 import { optimize } from "../shared/optimizer";
 import { addDays, clock, localDate, localInstant } from "../shared/time";
@@ -9,7 +9,7 @@ import { planSchema } from "../shared/schema";
 export async function scheduledReminders(env: Env) {
   if (
     env.APP_MODE !== "live" ||
-    !env.SUPABASE_SECRET_KEY ||
+    !serverKey(env) ||
     !env.VAPID_PRIVATE_KEY ||
     !env.VAPID_PUBLIC_KEY ||
     !env.VAPID_SUBJECT
@@ -62,11 +62,19 @@ export async function scheduledReminders(env: Env) {
         analysis = await optimize(p, forecast, { maxCalls: 6 });
       const best = analysis.best;
       if (!best || Date.parse(best.departureAt) > now + 60 * 60000) continue;
+      const preferences = (await db(
+        env,
+        `user_preferences?user_id=eq.${job.user_id}&select=locale&limit=1`,
+        { service: true },
+      )) as { locale: string }[];
+      const arabic = preferences[0]?.locale === "ar";
       const payload = await buildPushPayload(
         {
           data: {
-            title: "Traffic Optimizer",
-            body: `Check your ${route.name} journey. Best tested departure: ${clock(best.departureAt, p.timezone)}. Expected drive: ${Math.round(best.durationSeconds / 60)} min.`,
+            title: arabic ? "مخطط الرحلات" : "Traffic Optimizer",
+            body: arabic
+              ? `راجع رحلة ${route.name}. أفضل مغادرة مختبرة: ${clock(best.departureAt, p.timezone, "ar")}. القيادة المتوقعة: ${Math.round(best.durationSeconds / 60)} دقيقة.`
+              : `Check your ${route.name} journey. Best tested departure: ${clock(best.departureAt, p.timezone)}. Expected drive: ${Math.round(best.durationSeconds / 60)} min.`,
             url: "/plan",
           },
           options: { ttl: 600 },
