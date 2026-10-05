@@ -45,6 +45,20 @@
     "VAPID_SUBJECT": "mailto:mohammadwajdi01@gmail.com",
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFObAaonWURNpgjK"
   },
+  "env": {
+    "verification": {
+      "vars": {
+        "APP_MODE": "setup",
+        "PUBLIC_BETA": "false",
+        "GOOGLE_ENABLED": "false"
+      },
+      "durable_objects": {
+        "bindings": [
+          { "name": "BUDGET", "class_name": "BudgetLedger" }
+        ]
+      }
+    }
+  },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 0.1,

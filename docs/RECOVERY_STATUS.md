@@ -22,7 +22,7 @@ The baseline code has been re-tested locally. Browser download attempts failed w
 ## Pending work
 
 - Publish and verify complete source, migrations, lockfile and workflows in GitHub.
-- Run GitHub CI including desktop and phone example journeys.
+- Run GitHub CI including desktop and phone example journeys. Browser examples use an isolated setup-mode Wrangler environment; production mode remains live and no provider/account secrets enter CI.
 - Restore missing later repairs, preserving zero-paid-usage defaults and existing visual design.
 - Reconcile live configuration and deploy the tested revision.
 - Complete real guest/account/owner/reminder, traffic coverage, device and release acceptance.
