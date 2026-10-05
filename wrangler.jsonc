@@ -1,0 +1,53 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "traffic-optimizer",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-05",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BUDGET",
+        "class_name": "BudgetLedger"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "BudgetLedger"
+      ]
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "*/10 * * * *"
+    ]
+  },
+  "vars": {
+    "APP_MODE": "live",
+    "PUBLIC_BETA": "true",
+    "GOOGLE_ENABLED": "false",
+    "SUPABASE_URL": "https://bdxwyehnqwylvgoxyhhx.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_eoBWdOGrkMVk-u0YyD1kTQ_RRSXI3FE",
+    "VAPID_PUBLIC_KEY": "BACi_pL32HK14K6l16dK7kKpgYTzlJPhWGEHmU4fgpCWD_GSdjQlKJjHAx1IPsvDmblgBfo0FTqMDGZcJqVInVM",
+    "VAPID_SUBJECT": "mailto:mohammadwajdi01@gmail.com",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFObAaonWURNpgjK"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.1,
+    "redact_query_string": true
+  }
+}

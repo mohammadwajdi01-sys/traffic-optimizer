@@ -1,0 +1,76 @@
+export type Mode = "arrive_by" | "leave_around" | "avoid_traffic";
+export type Location = {
+  id?: string;
+  displayName: string;
+  latitude: number;
+  longitude: number;
+  countryCode?: string;
+  timezone?: string;
+  source?: "geoapify" | "gps" | "manual" | "demo";
+};
+export type Plan = {
+  origin: Location;
+  destination: Location;
+  mode: Mode;
+  date: string;
+  time: string;
+  timezone: string;
+  flexibilityMinutes: number;
+  safetyBufferMinutes: number;
+  maxEarlinessMinutes: number;
+  earliestTime: string;
+  latestTime: string;
+  preferredArrivalStart?: string;
+  earliestArrival?: string;
+  demo?: boolean;
+  turnstileToken?: string;
+};
+export type Candidate = {
+  departureAt: string;
+  arrivalAt: string;
+  durationSeconds: number;
+  staticDurationSeconds?: number;
+  typicalDurationSeconds?: number;
+  distanceMeters: number;
+  provider: "mapbox" | "google" | "demo";
+  geometry?: { type: "LineString"; coordinates: number[][] };
+  trafficCoverage: "available" | "unknown";
+  score?: number;
+  feasible?: boolean;
+};
+export type Analysis = {
+  id: string;
+  plan: Plan;
+  samples: Candidate[];
+  best: Candidate | null;
+  lowest: Candidate | null;
+  latest: Candidate | null;
+  avoid: { start: string; end: string; peakMinutes: number }[];
+  provider: string;
+  quality: "limited" | "moderate";
+  partial: boolean;
+  calls: number;
+  createdAt: string;
+  warnings: string[];
+  lowestMetric: "congestion" | "duration";
+};
+export type SavedRoute = {
+  id: string;
+  name: string;
+  plan: Plan;
+  days: number[];
+  reminders: boolean;
+  createdAt?: string;
+};
+export type AppConfig = {
+  mode: "setup" | "live";
+  authConfigured: boolean;
+  searchConfigured: boolean;
+  trafficConfigured: boolean;
+  mapConfigured: boolean;
+  supabaseUrl?: string;
+  supabaseKey?: string;
+  turnstileSiteKey?: string;
+  vapidPublicKey?: string;
+  publicBeta: boolean;
+};

@@ -1,0 +1,295 @@
+import { useEffect, useRef, useState } from "react";
+import { LocateFixed, MapPin, Search } from "lucide-react";
+import type { Location } from "../shared/types";
+import { demoLocations } from "../shared/demo";
+import { api } from "./api";
+import { en, ar } from "./i18n";
+import { useStore } from "./store";
+export function LocationField({
+  label,
+  value,
+  onChange,
+  searchEnabled,
+  gps = false,
+}: {
+  label: string;
+  value: Location | null;
+  onChange: (v: Location | null) => void;
+  searchEnabled: boolean;
+  gps?: boolean;
+}) {
+  const { locale, demo } = useStore(),
+    t = locale === "ar" ? ar : en,
+    [text, setText] = useState(value?.displayName ?? ""),
+    [open, setOpen] = useState(false),
+    [list, setList] = useState<Location[]>([]),
+    [active, setActive] = useState(-1),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [manual, setManual] = useState(false),
+    [lat, setLat] = useState(""),
+    [lng, setLng] = useState(""),
+    [tz, setTz] = useState("Asia/Amman");
+  const seq = useRef(0),
+    root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    setText(value?.displayName ?? "");
+  }, [value]);
+  useEffect(() => {
+    const outside = (e: PointerEvent) => {
+      if (!root.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, []);
+  useEffect(() => {
+    const run = ++seq.current;
+    setActive(-1);
+    if (!open) return;
+    if (demo) {
+      setList(
+        demoLocations.filter((l) =>
+          l.displayName.toLowerCase().includes(text.toLowerCase()),
+        ),
+      );
+      return;
+    }
+    if (!searchEnabled || text.trim().length < 3) {
+      setList([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setBusy(true);
+      try {
+        const res = await api<{ locations: Location[] }>(
+          "/api/location/suggest",
+          { text, language: locale },
+        );
+        if (run === seq.current) setList(res.locations);
+      } catch (e) {
+        if (run === seq.current)
+          setError(locale === "ar" ? t.error : (e as Error).message);
+      } finally {
+        if (run === seq.current) setBusy(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [text, open, searchEnabled, demo, locale, t.error]);
+  async function locate() {
+    setBusy(true);
+    setError("");
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const base: Location = {
+          displayName: t.current,
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          source: "gps",
+        };
+        try {
+          if (searchEnabled) {
+            const r = await api<{ locations: Location[] }>(
+              "/api/location/reverse",
+              {
+                latitude: base.latitude,
+                longitude: base.longitude,
+                language: locale,
+              },
+            );
+            onChange({
+              ...base,
+              timezone: r.locations[0]?.timezone,
+              countryCode: r.locations[0]?.countryCode,
+            });
+          } else
+            onChange({
+              ...base,
+              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            });
+        } catch {
+          onChange({
+            ...base,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          });
+        } finally {
+          setBusy(false);
+        }
+      },
+      () => {
+        setBusy(false);
+        setError(t.gpsDenied);
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 },
+    );
+  }
+  return (
+    <div className="location-field" ref={root}>
+      <div className={"location-icon " + (gps ? "blue" : "pink")}>
+        <MapPin size={20} />
+      </div>
+      <div className="location-content">
+        <label htmlFor={"location-" + (gps ? "from" : "to")}>{label}</label>
+        <input
+          autoComplete="off"
+          id={"location-" + (gps ? "from" : "to")}
+          role="combobox"
+          aria-expanded={open}
+          aria-controls={gps ? "from-options" : "to-options"}
+          aria-autocomplete="list"
+          aria-activedescendant={
+            open && active >= 0
+              ? `${gps ? "from" : "to"}-option-${active}`
+              : undefined
+          }
+          placeholder={gps ? t.origin : t.destination}
+          value={text}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setOpen(false);
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              setOpen(true);
+              if (list.length)
+                setActive((i) =>
+                  e.key === "ArrowDown"
+                    ? (i + 1) % list.length
+                    : i <= 0
+                      ? list.length - 1
+                      : i - 1,
+                );
+            }
+            if (e.key === "Enter" && open && active >= 0 && list[active]) {
+              e.preventDefault();
+              onChange(list[active]);
+              setOpen(false);
+            }
+          }}
+          onBlur={(e) => {
+            if (!root.current?.contains(e.relatedTarget as Node))
+              setOpen(false);
+          }}
+          onChange={(e) => {
+            setText(e.target.value);
+            onChange(null);
+            setOpen(true);
+            setError("");
+          }}
+        />
+      </div>
+      {gps && (
+        <button
+          type="button"
+          className="icon-button"
+          title={t.current}
+          aria-label={t.current}
+          onClick={locate}
+        >
+          <LocateFixed size={19} />
+        </button>
+      )}
+      {open && (
+        <div
+          className="suggestions"
+          role="listbox"
+          id={gps ? "from-options" : "to-options"}
+        >
+          {busy ? (
+            <div>{t.searching}</div>
+          ) : (
+            list.map((l, index) => (
+              <button
+                type="button"
+                role="option"
+                id={`${gps ? "from" : "to"}-option-${index}`}
+                aria-selected={active === index}
+                key={l.displayName}
+                onClick={() => {
+                  onChange(l);
+                  setOpen(false);
+                }}
+              >
+                <Search size={16} />
+                <span>{l.displayName}</span>
+              </button>
+            ))
+          )}
+          {!busy && !list.length && (
+            <div className="muted">{t.noSuggestions}</div>
+          )}
+          {demo && <small>{t.examples}</small>}
+          {!demo && (
+            <button
+              type="button"
+              onClick={() => {
+                setManual(true);
+                setOpen(false);
+              }}
+            >
+              {t.manual}
+            </button>
+          )}
+          {searchEnabled && <small>{t.searchAttribution}</small>}
+        </div>
+      )}
+      {error && <span className="field-error">{error}</span>}
+      {manual && (
+        <div className="manual-panel">
+          <p>{t.manualHelp}</p>
+          <label>
+            {t.latitude}
+            <input
+              type="number"
+              step="any"
+              min="-90"
+              max="90"
+              value={lat}
+              onChange={(e) => setLat(e.target.value)}
+            />
+          </label>
+          <label>
+            {t.longitude}
+            <input
+              type="number"
+              step="any"
+              min="-180"
+              max="180"
+              value={lng}
+              onChange={(e) => setLng(e.target.value)}
+            />
+          </label>
+          <label>
+            {t.timezone}
+            <input value={tz} onChange={(e) => setTz(e.target.value)} />
+          </label>
+          <button
+            type="button"
+            onClick={() => {
+              const a = Number(lat),
+                b = Number(lng);
+              try {
+                new Intl.DateTimeFormat("en", { timeZone: tz });
+                if (!lat || !lng || Math.abs(a) > 90 || Math.abs(b) > 180)
+                  throw new Error();
+                onChange({
+                  displayName: text || `${a}, ${b}`,
+                  latitude: a,
+                  longitude: b,
+                  timezone: tz,
+                  source: "manual",
+                });
+                setManual(false);
+              } catch {
+                setError(t.locationMissing);
+              }
+            }}
+          >
+            {t.apply}
+          </button>
+          <button type="button" onClick={() => setManual(false)}>
+            {t.cancel}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,14 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> traffic-optimizer@0.1.0 test
+> vitest run tests/unit.test.ts tests/ui.test.tsx
+
+
+ RUN  v5.0.3 /workspace/scratch/ae02d32e526b/traffic-optimizer
+
+
+ Test Files  2 passed (2)
+      Tests  30 passed (30)
+   Start at  18:30:48
+   Duration  3.66s (tests 63%, environment 18%, import 12%, transform 7%)
+
