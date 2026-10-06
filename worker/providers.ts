@@ -4,7 +4,7 @@ export async function remote(url: string, init?: RequestInit): Promise<any> {
   const r = await fetch(url, {
     ...init,
     signal: AbortSignal.timeout(12000),
-    redirect: "error",
+    redirect: "manual",
   });
   if (!r.ok)
     throw new ApiError(

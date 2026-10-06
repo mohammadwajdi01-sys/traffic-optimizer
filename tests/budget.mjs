@@ -4,8 +4,16 @@ import assert from "node:assert/strict";
 writeFileSync(
   "artifacts/worker/test-entry.js",
   readFileSync("artifacts/worker/index.js", "utf8") +
-    `export class TestBudgetLedger extends BudgetLedger{constructor(ctx,env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{await ctx.storage.put('config',{paid:false,monthlyBudget:0,providers:{mapbox:{enabled:true,soft:4,hard:5,free:5,pricePerThousand:1,period:'month',rpm:100},google:{enabled:false,soft:4,hard:5,free:5,pricePerThousand:10,period:'month',rpm:10}},countries:{JO:'mapbox'}});});}}`,
+    `import { WorkerEntrypoint } from 'cloudflare:workers';
+    export class TestProvider extends WorkerEntrypoint {
+      async fetch(request) {
+        try { return Response.json(await remote('https://upstream.test'+new URL(request.url).pathname, {headers:{Authorization:'Bearer private-test-value'}})); }
+        catch(e) { return Response.json({error:e.message}, {status:e.status ?? 500}); }
+      }
+    }
+    export class TestBudgetLedger extends BudgetLedger{constructor(ctx,env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{await ctx.storage.put('config',{paid:false,monthlyBudget:0,providers:{mapbox:{enabled:true,soft:4,hard:5,free:5,pricePerThousand:1,period:'month',rpm:100},google:{enabled:false,soft:4,hard:5,free:5,pricePerThousand:10,period:'month',rpm:10}},countries:{JO:'mapbox'}});});}}`,
 );
+const upstreamRequests = [];
 const mf = new Miniflare(
   convertV4MiniflareOptions({
     telemetry: { enabled: false },
@@ -20,12 +28,42 @@ const mf = new Miniflare(
           BUDGET: { className: "TestBudgetLedger", useSQLite: true },
         },
         bindings: { APP_MODE: "setup", PUBLIC_BETA: "false" },
-        serviceBindings: { ASSETS: () => new Response("static") },
+        serviceBindings: {
+          ASSETS: () => new Response("static"),
+          PROVIDER_CHECK: { name: "traffic", entrypoint: "TestProvider" },
+        },
+        outboundService: (request) => {
+          upstreamRequests.push(request.url);
+          assert.equal(new URL(request.url).hostname, "upstream.test");
+          return new URL(request.url).pathname === "/redirect"
+            ? new Response(null, {
+                status: 302,
+                headers: { Location: "https://other.test/secret-sink" },
+              })
+            : Response.json({
+                locations: [{ displayName: "Public landmark" }],
+              });
+        },
       },
     ],
   }),
 );
 try {
+  const bindings = await mf.getBindings("traffic");
+  const normal = await bindings.PROVIDER_CHECK.fetch("https://check/ok");
+  assert.equal(normal.status, 200);
+  assert.equal(
+    (await normal.json()).locations[0].displayName,
+    "Public landmark",
+  );
+  const redirected = await bindings.PROVIDER_CHECK.fetch(
+    "https://check/redirect",
+  );
+  assert.equal(redirected.status, 502);
+  assert.deepEqual(upstreamRequests, [
+    "https://upstream.test/ok",
+    "https://upstream.test/redirect",
+  ]);
   const ns = await mf.getDurableObjectNamespace("BUDGET", "traffic"),
     stub = ns.get(ns.idFromName("test"));
   async function call(path, body = {}) {
@@ -82,7 +120,7 @@ try {
   });
   assert.equal(cors.status, 403);
   console.log(
-    "PASS: real Durable Object concurrent reservations, free cap, paid budget, disabled provider, guest quota, health, owner access, cross-origin denial.",
+    "PASS: real Worker provider fetch and redirect refusal; Durable Object concurrent reservations, free cap, paid budget, disabled provider, guest quota, health, owner access, cross-origin denial.",
   );
 } finally {
   await mf.dispose();

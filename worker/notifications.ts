@@ -89,13 +89,14 @@ export async function scheduledReminders(env: Env) {
       const res = await fetch(subscriptions[0].subscription.endpoint, {
         ...payload,
         signal: AbortSignal.timeout(10000),
-        redirect: "error",
+        redirect: "manual",
       });
       if (res.status === 404 || res.status === 410)
         await db(env, `push_subscriptions?user_id=eq.${job.user_id}`, {
           method: "DELETE",
           service: true,
         });
+      else if (!res.ok) throw new Error("Push service rejected the reminder.");
     } catch {
       await budget(env, "/error", {
         code: "reminder_failed",
