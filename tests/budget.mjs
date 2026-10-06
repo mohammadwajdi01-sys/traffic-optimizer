@@ -21,10 +21,30 @@ writeFileSync(
     export class TestBudgetLedger extends BudgetLedger{constructor(ctx,env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{await ctx.storage.put('config',{paid:false,monthlyBudget:0,providers:{mapbox:{enabled:true,soft:4,hard:5,free:5,pricePerThousand:1,period:'month',rpm:100},geoapify:{enabled:true,soft:100,hard:100,free:100,pricePerThousand:1,period:'month',rpm:100},google:{enabled:false,soft:4,hard:5,free:5,pricePerThousand:10,period:'month',rpm:10}},countries:{JO:'mapbox'}});});}}`,
 );
 const upstreamRequests = [], locationRequests = [];
+const usedChallenges = new Set(); let verificationRequests = 0;
 const mf = new Miniflare(
   convertV4MiniflareOptions({
     telemetry: { enabled: false },
     workers: [
+      {
+        name: "verification",
+        modules: true,
+        scriptPath: "artifacts/worker/index.js",
+        compatibilityDate: "2026-10-05",
+        compatibilityFlags: ["nodejs_compat"],
+        durableObjects: {BUDGET:{className:"BudgetLedger",useSQLite:true}},
+        bindings: {PUBLIC_BETA:"true",TURNSTILE_SECRET_KEY:"test-verification-secret",GUEST_SESSION_SECRET:"test-signing-secret"},
+        serviceBindings: {ASSETS:()=>new Response("static")},
+        outboundService: async(request)=>{
+          assert.equal(request.url,"https://challenges.cloudflare.com/turnstile/v0/siteverify");
+          verificationRequests++;
+          const input=await request.json();
+          assert.equal(input.secret,"test-verification-secret");
+          assert.equal(input.remoteip,"203.0.113.10");
+          const repeated=usedChallenges.has(input.response); usedChallenges.add(input.response);
+          return Response.json({success: input.response!=="rejected" && !repeated,hostname:input.response==="wrong-host" ? "foreign.test" : "app.test"});
+        }
+      },
       {
         name: "traffic",
         modules: true,
@@ -66,6 +86,7 @@ const mf = new Miniflare(
   }),
 );
 try {
+  const mainWorker = await mf.getWorker("traffic");
   const bindings = await mf.getBindings("traffic");
   const normal = await bindings.PROVIDER_CHECK.fetch("https://check/ok");
   assert.equal(normal.status, 200);
@@ -137,7 +158,7 @@ try {
   await call("/update", { monthlyBudget: 1 });
   assert.equal((await call("/reserve", { provider: "mapbox" })).status, 200);
   assert.equal((await call("/reserve", { provider: "mapbox" })).status, 429);
-  async function location(body) { return mf.dispatchFetch("http://local/api/location/suggest",{method:"POST",headers:{Authorization:"Bearer test-session","Content-Type":"application/json"},body:JSON.stringify(body)}); }
+  async function location(body) { return mainWorker.fetch("http://local/api/location/suggest",{method:"POST",headers:{Authorization:"Bearer test-session","Content-Type":"application/json"},body:JSON.stringify(body)}); }
   const localSuggestions = await location({text:"Museum",countryCode:"JO",latitude:31.95,longitude:35.91});
   assert.equal(localSuggestions.status,200);
   assert.deepEqual((await localSuggestions.json()).locations.map(l=>l.countryCode),["JO"]);
@@ -145,23 +166,53 @@ try {
   assert.equal(new URL(locationRequests[0]).searchParams.get("bias"),"proximity:35.91,31.95");
   assert.equal((await location({text:"Museum",countryCode:"XX"})).status,400);
   assert.equal((await location({text:"Museum",countryCode:"JO",latitude:31.95})).status,400);
-  const missingCountry = await mf.dispatchFetch("http://local/api/location/suggest",{method:"POST",headers:{Authorization:"Bearer test-session"},body:JSON.stringify({text:"Museum"}),cf:{country:"XX"}});
+  const missingCountry = await mainWorker.fetch("http://local/api/location/suggest",{method:"POST",headers:{Authorization:"Bearer test-session"},body:JSON.stringify({text:"Museum"}),cf:{country:"XX"}});
   assert.equal(missingCountry.status,400);
   assert.equal(locationRequests.length,1);
-  const inferredCountry = await mf.dispatchFetch("http://local/api/location/suggest",{method:"POST",headers:{Authorization:"Bearer test-session"},body:JSON.stringify({text:"Museum"}),cf:{country:"LY"}});
+  const inferredCountry = await mainWorker.fetch("http://local/api/location/suggest",{method:"POST",headers:{Authorization:"Bearer test-session"},body:JSON.stringify({text:"Museum"}),cf:{country:"LY"}});
   assert.equal(inferredCountry.status,200);
   assert.equal(new URL(locationRequests[1]).searchParams.get("filter"),"countrycode:ly");
   assert.deepEqual((await inferredCountry.json()).locations,[]);
-  const configCountry = await mf.dispatchFetch("http://local/api/config",{cf:{country:"JO"}});
+  const configCountry = await mainWorker.fetch("http://local/api/config",{cf:{country:"JO"}});
   assert.equal((await configCountry.json()).detectedCountry,"JO");
-  const health = await mf.dispatchFetch("http://local/api/health");
+  const health = await mainWorker.fetch("http://local/api/health");
   assert.equal(health.status, 200);
-  const admin = await mf.dispatchFetch("http://local/api/admin/overview");
+  const admin = await mainWorker.fetch("http://local/api/admin/overview");
   assert.equal(admin.status, 401);
-  const cors = await mf.dispatchFetch("http://local/api/config", {
+  const cors = await mainWorker.fetch("http://local/api/config", {
     headers: { Origin: "https://evil.invalid" },
   });
   assert.equal(cors.status, 403);
+  const verification = await mf.getWorker("verification");
+  const guestHeaders={"CF-Connecting-IP":"203.0.113.10"};
+  async function guestStatus(cookie,ip="203.0.113.10") {
+    return verification.fetch("https://app.test/api/guest-session",{headers:{"CF-Connecting-IP":ip,...(cookie?{Cookie:cookie}:{})}});
+  }
+  assert.deepEqual(await (await guestStatus()).json(),{verified:false});
+  assert.deepEqual(await (await guestStatus("traffic_guest=invalid.cookie")).json(),{verified:false});
+  assert.equal(verificationRequests,0);
+  async function verifyChallenge(token) {
+    return verification.fetch("https://app.test/api/guest-session",{method:"POST",headers:{...guestHeaders,"Content-Type":"application/json"},body:JSON.stringify({token})});
+  }
+  assert.equal((await verifyChallenge("rejected")).status,403);
+  assert.equal((await verifyChallenge("wrong-host")).status,403);
+  const verified = await verifyChallenge("valid-test-challenge");
+  assert.equal(verified.status,200,JSON.stringify({body:await verified.clone().text(),verificationRequests}));
+  const verifiedBody=await verified.json();
+  assert.equal(verifiedBody.ok,true);
+  assert.ok(verifiedBody.expiresAt>Date.now());
+  const cookieHeader=verified.headers.get("Set-Cookie");
+  assert.match(cookieHeader,/HttpOnly; Secure; SameSite=Strict; Path=\/api; Max-Age=3600/);
+  const cookie=cookieHeader.split(";")[0];
+  const restored=await guestStatus(cookie);
+  assert.match(restored.headers.get("Cache-Control"),/no-store/);
+  assert.deepEqual(await restored.json(),{verified:true,expiresAt:verifiedBody.expiresAt});
+  assert.deepEqual(await (await guestStatus(cookie,"203.0.113.11")).json(),{verified:false});
+  assert.deepEqual(await (await guestStatus(cookie+"tampered")).json(),{verified:false});
+  assert.deepEqual(await (await guestStatus("traffic_guest=1.expired")).json(),{verified:false});
+  assert.equal((await verifyChallenge("valid-test-challenge")).status,403);
+  assert.equal(verificationRequests,4);
+  console.log("PASS: guest challenge rejection, strict hostname, replay refusal, secure cookie, server-only restoration, tampered/expired/IP-changed session rejection; no provider calls during restoration.");
   console.log(
     "PASS: real Worker provider fetch and redirect refusal; Durable Object concurrent reservations, free cap, paid budget, disabled provider, guest quota, country filter/proximity/unknown-country rejection before provider use, health, owner access, cross-origin denial.",
   );

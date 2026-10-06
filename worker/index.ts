@@ -6,7 +6,7 @@ import { ApiError, budget, type Env } from "./env";
 import { db, identity } from "./database";
 import { createForecast, normalizeGeoapify, remote } from "./providers";
 import { scheduledReminders } from "./notifications";
-import { createGuestSession } from "./guest";
+import { createGuestSession, verifyGuestSession } from "./guest";
 import { countryCode, locationQuery, locationSearchSchema } from "../shared/location-search";
 export { BudgetLedger } from "./budget";
 const security = {
@@ -72,6 +72,19 @@ async function api(request: Request, env: Env) {
     });
   if (path === "/api/health" && request.method === "GET")
     return reply({ ok: true, mode: env.APP_MODE ?? "setup", version: "0.1.0" });
+  if (path === "/api/guest-session" && request.method === "GET") {
+    if (env.PUBLIC_BETA !== "true") return reply({ verified: false });
+    if (!env.TURNSTILE_SECRET_KEY || !env.GUEST_SESSION_SECRET)
+      throw new ApiError(503, "Public access has not been enabled securely.");
+    try {
+      await verifyGuestSession(request, env);
+      const expires = request.headers.get("Cookie")!.match(/(?:^|; )traffic_guest=([^;]+)/)![1].split(".")[0];
+      return reply({ verified: true, expiresAt: Number(expires) * 1000 });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) return reply({ verified: false });
+      throw e;
+    }
+  }
   if (path === "/api/guest-session" && request.method === "POST") {
     if (env.PUBLIC_BETA !== "true")
       throw new ApiError(403, "Guest access is closed.");
@@ -84,7 +97,7 @@ async function api(request: Request, env: Env) {
     await verifyBot(env, request, input.token);
     const token = await createGuestSession(env, ip);
     return Response.json(
-      { ok: true },
+      { ok: true, expiresAt: Number(token.split(".")[0]) * 1000 },
       {
         headers: {
           ...security,

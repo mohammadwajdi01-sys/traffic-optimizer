@@ -65,15 +65,17 @@ describe("Guest verification recovery", () => {
     render(
       <GuestAccess siteKey="test-site-key" onReady={ready} onError={vi.fn()} />,
     );
+    await waitFor(() => expect(renderWidget).toHaveBeenCalledTimes(1));
     act(() => {
       options["error-callback"]("200500");
     });
     expect(ready).not.toHaveBeenCalled();
-    expect(screen.getByRole("status").textContent).toContain("couldn't finish");
+    expect(screen.getByRole("status").textContent).toContain("could not load");
+    expect(screen.getByText(/Verification code:/).textContent).toContain("200500");
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: "Refresh verification" }));
-    expect(renderWidget).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(renderWidget).toHaveBeenCalledTimes(2));
     expect(ready).not.toHaveBeenCalled();
   });
   it("unlocks access only after server validation succeeds", async () => {
@@ -96,6 +98,7 @@ describe("Guest verification recovery", () => {
     render(
       <GuestAccess siteKey="test-site-key" onReady={ready} onError={vi.fn()} />,
     );
+    await waitFor(() => expect(options).toBeDefined());
     await act(async () => {
       await options.callback("test-token");
     });
@@ -105,12 +108,80 @@ describe("Guest verification recovery", () => {
     );
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({ ok: true, json: async () => ({ ok: true }) })),
+      vi.fn(async () => ({ ok: true, json: async () => ({ ok: true, expiresAt: Date.now() + 3600000 }) })),
     );
     await act(async () => {
       await options.callback("new-test-token");
     });
     expect(ready).toHaveBeenCalledTimes(1);
+  });
+  it("restores only a server-verified unexpired session without loading a challenge", async () => {
+    const expiresAt = Date.now() + 60000;
+    const widget = vi.fn(); const ready = vi.fn();
+    vi.stubGlobal("turnstile", {render:widget,remove:vi.fn()});
+    vi.stubGlobal("fetch", vi.fn(async () => ({ok:true,json:async()=>({verified:true,expiresAt})})));
+    render(<GuestAccess siteKey="test-site-key" onReady={ready} onError={vi.fn()}/>);
+    await waitFor(()=>expect(ready).toHaveBeenCalledWith(expiresAt));
+    expect(widget).not.toHaveBeenCalled();
+  });
+  it("waits for SDK readiness and ignores a stale readiness callback after refresh", async () => {
+    const callbacks: (()=>void)[] = []; const widget=vi.fn(()=>"id");
+    vi.stubGlobal("turnstile", {ready:(cb:()=>void)=>callbacks.push(cb),render:widget,remove:vi.fn()});
+    render(<GuestAccess siteKey="test-site-key" onReady={vi.fn()} onError={vi.fn()}/>);
+    await waitFor(()=>expect(callbacks).toHaveLength(1));
+    expect(widget).not.toHaveBeenCalled();
+    act(()=>callbacks[0]());
+    expect(widget).toHaveBeenCalledTimes(1);
+    await userEvent.setup().click(screen.getByRole("button",{name:"Refresh verification"}));
+    await waitFor(()=>expect(callbacks).toHaveLength(2));
+    act(()=>{callbacks[0](); callbacks[1](); callbacks[1]();});
+    expect(widget).toHaveBeenCalledTimes(2);
+  });
+  it("submits a challenge once and ignores old challenge callbacks after refresh", async () => {
+    const options:any[]=[]; let release:(v:any)=>void=()=>{};
+    const post=vi.fn(()=>new Promise(resolve=>{release=resolve;}));
+    vi.stubGlobal("turnstile", {render:(_r:any,o:any)=>{options.push(o);return "id";},remove:vi.fn()});
+    vi.stubGlobal("fetch",vi.fn(async (_url:any,init:any)=>init.method==="POST" ? post() : {ok:true,json:async()=>({verified:false})}));
+    const ready=vi.fn();
+    render(<GuestAccess siteKey="test-site-key" onReady={ready} onError={vi.fn()}/>);
+    await waitFor(()=>expect(options).toHaveLength(1));
+    let pending:Promise<void>;
+    act(()=>{pending=options[0].callback("test-token"); options[0].callback("test-token");});
+    await waitFor(()=>expect(post).toHaveBeenCalledTimes(1));
+    await act(async()=>{release({ok:true,json:async()=>({ok:true,expiresAt:Date.now()+60000})});await pending;});
+    expect(ready).toHaveBeenCalledTimes(1);
+    await act(async()=>{await options[0].callback("old-token");});
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+  it("ignores callbacks from a removed challenge and keeps routes locked", async () => {
+    const options:any[]=[]; const ready=vi.fn();
+    vi.stubGlobal("turnstile",{render:(_r:any,o:any)=>{options.push(o);return "id";},remove:vi.fn()});
+    const fetcher=vi.fn(async()=>({ok:true,json:async()=>({verified:false})}));
+    vi.stubGlobal("fetch",fetcher);
+    render(<GuestAccess siteKey="test-site-key" onReady={ready} onError={vi.fn()}/>);
+    await waitFor(()=>expect(options).toHaveLength(1));
+    await userEvent.setup().click(screen.getByRole("button",{name:"Refresh verification"}));
+    await waitFor(()=>expect(options).toHaveLength(2));
+    const calls=fetcher.mock.calls.length;
+    await act(async()=>{await options[0].callback("stale-token");options[0]["error-callback"]("110200");});
+    expect(fetcher).toHaveBeenCalledTimes(calls);
+    expect(ready).not.toHaveBeenCalled();
+    expect(screen.queryByText(/110200/)).toBeNull();
+  });
+  it("shows safe localized configuration and browser codes without granting access", async()=>{
+    let options:any; const ready=vi.fn();
+    vi.stubGlobal("turnstile",{render:(_r:any,o:any)=>{options=o;return "id";},remove:vi.fn()});
+    useStore.getState().setLocale("ar");
+    render(<GuestAccess siteKey="test-site-key" onReady={ready} onError={vi.fn()}/>);
+    await waitFor(()=>expect(options).toBeDefined());
+    act(()=>options["error-callback"]("110200"));
+    expect(screen.getByRole("status").textContent).toContain("إعداد");
+    expect(screen.getByText(/رمز التحقق/).textContent).toContain("110200");
+    act(()=>options["error-callback"]("600010"));
+    expect(screen.getByRole("status").textContent).toContain("المتصفح");
+    act(()=>options["error-callback"]("<private-value>"));
+    expect(screen.queryByText(/private-value/)).toBeNull();
+    expect(ready).not.toHaveBeenCalled();
   });
 });
 function mount() {
