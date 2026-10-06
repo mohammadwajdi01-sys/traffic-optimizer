@@ -234,10 +234,16 @@ async function api(request: Request, env: Env) {
     const input = z
       .object({
         name: z.string().trim().min(1).max(100).optional(),
+        plan: planSchema.optional(),
         reminders: z.boolean().optional(),
         days: z.array(z.number().int().min(0).max(6)).min(1).optional(),
       })
       .parse(await body(request));
+    if (input.plan) {
+      if (input.plan.origin.source === "demo" || input.plan.destination.source === "demo") throw new ApiError(400, "Select real locations before saving to your account.");
+      const {turnstileToken: _, demo: __, ...clean} = input.plan;
+      input.plan = clean;
+    }
     return reply(
       await db(env, `saved_routes?id=eq.${route[1]}&user_id=eq.${who.id}`, {
         method: "PATCH",
@@ -269,6 +275,11 @@ async function api(request: Request, env: Env) {
       }),
     );
   }
+  if (path === "/api/push/status" && request.method === "POST") {
+    const {endpoint} = z.object({endpoint: z.string().url().max(2048)}).parse(await body(request));
+    const rows = await db(env, `push_subscriptions?user_id=eq.${who.id}&select=subscription&limit=1`, {token: who.token}) as {subscription: {endpoint: string}}[];
+    return reply({subscribed: rows.some(row => row.subscription.endpoint === endpoint)});
+  }
   if (path === "/api/push" && request.method === "POST") {
     const input = z
       .object({
@@ -289,15 +300,13 @@ async function api(request: Request, env: Env) {
       ].some((h) => host === h || host.endsWith("." + h))
     )
       throw new ApiError(400, "This push service is not supported.");
-    return reply(
-      await db(env, "push_subscriptions?on_conflict=user_id", {
-        method: "POST",
-        body: { user_id: who.id, subscription: input },
-        token: who.token,
-      }),
-      201,
-    );
+    const saved = await db(env, "push_subscriptions?on_conflict=user_id", {
+      method: "POST", body: {user_id: who.id, subscription: input}, token: who.token,
+    });
+    await db(env, `notification_jobs?user_id=eq.${who.id}`, {method: "PATCH", body: {next_attempt_at: new Date().toISOString()}, service: true});
+    return reply(saved, 201);
   }
+
   if (path === "/api/push" && request.method === "DELETE") {
     await db(env, `push_subscriptions?user_id=eq.${who.id}`, {
       method: "DELETE",

@@ -59,7 +59,7 @@ test("weekly heatmap is computed and Arabic is RTL without horizontal overflow",
     .click();
   await page.getByRole("button", { name: "Analyze seven days" }).click();
   await expect(page.locator(".day-summary")).toHaveCount(7);
-  await expect(page.locator(".heat-cell")).toHaveCount(49);
+  await expect(page.locator(".heat-cell")).toHaveCount(35);
   await page.getByRole("button", { name: "ع", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
   expect(

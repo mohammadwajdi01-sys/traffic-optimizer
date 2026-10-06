@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isWindowPlan, selectedWindow } from "./windows";
 export const locationSchema = z.object({
   id: z.string().max(150).optional(),
   displayName: z.string().min(1).max(250),
@@ -13,8 +14,9 @@ export const planSchema = z
   .object({
     origin: locationSchema,
     destination: locationSchema,
-    mode: z.enum(["arrive_by", "leave_around", "avoid_traffic"]),
+    mode: z.enum(["arrive_between", "leave_between", "arrive_by", "leave_around", "avoid_traffic"]),
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).or(z.literal("")).optional(),
     time,
     timezone: z.string().min(1).max(80),
     flexibilityMinutes: z.number().int().min(15).max(180),
@@ -28,6 +30,10 @@ export const planSchema = z
     turnstileToken: z.string().max(2048).optional(),
   })
   .superRefine((p, c) => {
+    if (isWindowPlan(p)) {
+      try { selectedWindow(p); }
+      catch (e) { c.addIssue({code: "custom", path: ["latestTime"], message: (e as Error).message}); }
+    }
     if (p.origin.timezone && p.timezone !== p.origin.timezone)
       c.addIssue({
         code: "custom",

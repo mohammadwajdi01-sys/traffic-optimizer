@@ -5,6 +5,7 @@ import { createForecast } from "./providers";
 import { optimize } from "../shared/optimizer";
 import { addDays, clock, localDate, localInstant } from "../shared/time";
 import type { Plan, SavedRoute } from "../shared/types";
+import { isArrival, recurringPlan, selectedWindow } from "../shared/windows";
 import { planSchema } from "../shared/schema";
 export async function scheduledReminders(env: Env) {
   if (
@@ -32,36 +33,34 @@ export async function scheduledReminders(env: Env) {
         next = localInstant(addDays(date, 1), "00:05", route.plan.timezone);
         continue;
       }
-      const p: Plan = planSchema.parse({ ...route.plan, date, demo: false });
-      const target = localInstant(
-        date,
-        p.mode === "avoid_traffic" ? p.earliestTime : p.time,
-        p.timezone,
-      );
-      if (now < target - 120 * 60000) {
-        next = target - 120 * 60000;
-        continue;
-      }
-      if (now > target + 10 * 60000) {
+      const p: Plan = planSchema.parse({...recurringPlan(route.plan, date), demo: false});
+      const [start, end] = selectedWindow(p);
+      if (now > end) {
         next = localInstant(addDays(date, 1), "00:05", p.timezone);
         continue;
       }
+      const subscriptions = (await db(env, `push_subscriptions?user_id=eq.${job.user_id}&select=subscription&limit=1`, {service: true})) as any[];
+      if (!subscriptions.length) { next = now + 86400000; continue; }
+      // A reminder lead is distinct from an arrival allowance; the planner never adds it to the journey.
+      if (!isArrival(p) && now < start - 60 * 60000) {next = start - 60 * 60000; continue;}
       next = now + 10 * 60000;
-      const key = `${job.route_id}:${date}:${Math.floor(now / (30 * 60000))}`;
-      if (!(await budget(env, "/once", { key })).claimed) continue;
-      const subscriptions = (await db(
-        env,
-        `push_subscriptions?user_id=eq.${job.user_id}&select=subscription&limit=1`,
-        { service: true },
-      )) as any[];
-      if (!subscriptions.length) {
-        next = now + 86400000;
-        continue;
+      const provider = await createForecast(env, p, false);
+      const cache = new Map<string, Awaited<ReturnType<typeof provider>>>();
+      const forecast = async (at: string) => {
+        if (cache.has(at)) return cache.get(at)!;
+        const c = await provider(at); cache.set(at,c); return c;
+      };
+      if (isArrival(p) && now < start) {
+        const at = new Date(end - p.safetyBufferMinutes * 60000).toISOString();
+        const estimate = await forecast(at);
+        const due = start - estimate.durationSeconds * 1000 - 60 * 60000;
+        if (now < due) { next = due; continue; }
       }
-      const forecast = await createForecast(env, p, false),
-        analysis = await optimize(p, forecast, { maxCalls: 6 });
+      const analysis = await optimize(p, forecast, {maxCalls: 6});
       const best = analysis.best;
       if (!best || Date.parse(best.departureAt) > now + 60 * 60000) continue;
+      const key = `${job.route_id}:${date}:${Math.floor(now / (30 * 60000))}`;
+      if (!(await budget(env, "/once", {key})).claimed) continue;
       const preferences = (await db(
         env,
         `user_preferences?user_id=eq.${job.user_id}&select=locale&limit=1`,
@@ -75,7 +74,7 @@ export async function scheduledReminders(env: Env) {
             body: arabic
               ? `راجع رحلة ${route.name}. أفضل مغادرة مختبرة: ${clock(best.departureAt, p.timezone, "ar")}. القيادة المتوقعة: ${Math.round(best.durationSeconds / 60)} دقيقة.`
               : `Check your ${route.name} journey. Best tested departure: ${clock(best.departureAt, p.timezone)}. Expected drive: ${Math.round(best.durationSeconds / 60)} min.`,
-            url: "/plan",
+            url: "/routes",
           },
           options: { ttl: 600 },
         },

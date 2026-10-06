@@ -1,4 +1,4 @@
-export type Mode = "arrive_by" | "leave_around" | "avoid_traffic";
+export type Mode = "arrive_between" | "leave_between" | "arrive_by" | "leave_around" | "avoid_traffic";
 export type Location = {
   id?: string;
   displayName: string;
@@ -13,6 +13,7 @@ export type Plan = {
   destination: Location;
   mode: Mode;
   date: string;
+  endDate?: string;
   time: string;
   timezone: string;
   flexibilityMinutes: number;
@@ -45,6 +46,9 @@ export type Analysis = {
   best: Candidate | null;
   lowest: Candidate | null;
   latest: Candidate | null;
+  earliest?: Candidate | null;
+  searchWindow?: [string, string];
+  failedDepartures?: string[];
   avoid: { start: string; end: string; peakMinutes: number }[];
   provider: string;
   quality: "limited" | "moderate";

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -50,6 +50,8 @@ import { api, ApiFailure, configureAuth, navUrl, supabase } from "./api";
 import { useStore } from "./store";
 import { en, ar, forecastWarning } from "./i18n";
 import { weeklyPlans } from "../shared/planning";
+import { isArrival, isWindowPlan, migratePlan, recurringPlan } from "../shared/windows";
+import { ForecastTimeline } from "./ForecastTimeline";
 import GuestAccess from "./GuestAccess";
 import { LocationField } from "./LocationField";
 import { MapPreview } from "./MapPreview";
@@ -82,10 +84,10 @@ const devicePreferences = () => {
         p.safety_buffer >= 0 &&
         p.safety_buffer <= 60
           ? p.safety_buffer
-          : 10,
+          : 0,
     };
   } catch {
-    return { navigation: "ask" as const, safety_buffer: 10 };
+    return { navigation: "ask" as const, safety_buffer: 0 };
   }
 };
 export default function App() {
@@ -107,6 +109,7 @@ export default function App() {
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [saveOpen, setSaveOpen] = useState(false),
+    [editingId, setEditingId] = useState<string | null>(null),
     [name, setName] = useState(""),
     [days, setDays] = useState([0, 1, 2, 3, 4]),
     [reminders, setReminders] = useState(false),
@@ -138,6 +141,14 @@ export default function App() {
     defaultValues: { ...plan, safetyBufferMinutes: prefs.safety_buffer },
   });
   const mode = form.watch("mode");
+  const requestVersion = useRef(0);
+  useEffect(() => {
+    const subscription = form.watch(() => {
+      requestVersion.current++;
+      setAnalysis(null); setSelected(null); setWeekly([]);
+    });
+    return () => subscription.unsubscribe();
+  }, [form, setAnalysis]);
   const go = (path: string) => {
     history.pushState(null, "", path === "today" ? "/" : "/" + path);
     setPage(path);
@@ -186,27 +197,41 @@ export default function App() {
       setSaved(safeDeviceRoutes());
       return;
     }
+    let active = true;
     api<{ role: string }>("/api/me")
-      .then((v) => setRole(v.role))
+      .then((v) => {if(active) setRole(v.role);})
       .catch(() => {});
     api<SavedRoute[]>("/api/routes")
-      .then(setSaved)
+      .then(rows => {if(active) setSaved(rows);})
       .catch((e) => setError((e as Error).message));
     api<any[]>("/api/preferences")
       .then((rows) => {
-        if (rows[0]) {
+        if (active && rows[0]) {
           setPrefs(rows[0]);
           setLocale(rows[0].locale);
           form.setValue("safetyBufferMinutes", rows[0].safety_buffer);
         }
       })
       .catch(() => {});
+    return () => {active = false;};
   }, [user, demo]);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(""), 6000);
     return () => clearTimeout(timer);
   }, [notice]);
+  useEffect(() => {
+    let active = true;
+    setPush(false);
+    if (user && config.vapidPublicKey && "serviceWorker" in navigator && "PushManager" in window) {
+      navigator.serviceWorker.ready.then(r => r.pushManager.getSubscription()).then(async sub => {
+        if (!sub) return;
+        const status = await api<{subscribed: boolean}>("/api/push/status", {endpoint: sub.endpoint});
+        if(active) setPush(status.subscribed);
+      }).catch(() => {});
+    }
+    return () => {active = false;};
+  }, [user, config.vapidPublicKey]);
   function startDemo() {
     const p = { ...defaultPlan(), safetyBufferMinutes: prefs.safety_buffer };
     setDemo(true);
@@ -221,19 +246,19 @@ export default function App() {
     go("plan");
   }
   function useRoute(r: SavedRoute) {
+    setEditingId(null);
     const isExample = r.plan.origin.source === "demo";
     setDemo(isExample);
-    const p = {
-      ...r.plan,
-      date: localDate(Date.now() + 86400000, r.plan.timezone),
-    };
-    setOrigin(p.origin);
+    const p = recurringPlan(r.plan, localDate(Date.now() + 86400000, r.plan.timezone));
+    setOrigin(p.origin.source === "gps" ? null : p.origin);
     setDestination(p.destination);
     form.reset(p);
     setPlan(p);
     setAnalysis(null);
     setSelected(null);
     setWeekly([]);
+    if (!isWindowPlan(r.plan)) setNotice(t.migratedRoute);
+    if (p.origin.source === "gps") setNotice(t.gpsRefresh);
     go("plan");
   }
   async function analyze(p: Plan) {
@@ -244,6 +269,7 @@ export default function App() {
       return;
     }
     setBusy(true);
+    const version = ++requestVersion.current;
     try {
       const actual = {
         ...p,
@@ -256,6 +282,7 @@ export default function App() {
       const a = demo
         ? await optimize(actual, (time) => demoForecast(actual, time))
         : await api<Analysis>("/api/analysis/day", actual);
+      if (version !== requestVersion.current) return;
       setAnalysis(a);
       setSelected(a.best ?? a.lowest);
       go("results");
@@ -285,6 +312,8 @@ export default function App() {
       setError(t.locationMissing);
       return;
     }
+    const checked = planSchema.safeParse({...p, origin, destination, timezone: origin.timezone ?? p.timezone});
+    if (!checked.success) {setError(t.windowError); return;}
     const r = {
       name: name.trim(),
       plan: {
@@ -299,7 +328,7 @@ export default function App() {
     };
     try {
       if (demo) {
-        const next = [{ ...r, id: crypto.randomUUID() }, ...safeDeviceRoutes()];
+        const next = editingId ? safeDeviceRoutes().map(old => old.id === editingId ? {...r, id: editingId} : old) : [{ ...r, id: crypto.randomUUID() }, ...safeDeviceRoutes()];
         localStorage.setItem("traffic.demoRoutes", JSON.stringify(next));
         setSaved(next);
       } else {
@@ -308,7 +337,7 @@ export default function App() {
           setAuthOpen(true);
           return;
         }
-        await api("/api/routes", r);
+        await api(editingId ? "/api/routes/" + editingId : "/api/routes", r, editingId ? "PATCH" : "POST");
         setSaved(await api<SavedRoute[]>("/api/routes"));
       }
       setSaveOpen(false);
@@ -345,6 +374,7 @@ export default function App() {
     setError("");
     setBusy(true);
     setWeekly([]);
+    const version = ++requestVersion.current;
     const list: (Analysis | null)[] = [];
     const p = {
       ...form.getValues(),
@@ -372,6 +402,7 @@ export default function App() {
       }
       if (count < 7) setNotice(t.weekHorizon);
       for (let i = 0; i < 7; i++) {
+        if (version !== requestVersion.current) return;
         setWeekProgress(i + 1);
         const day = days[i];
         if (!day) {
@@ -397,6 +428,7 @@ export default function App() {
             break;
           }
         }
+        if (version !== requestVersion.current) return;
         setWeekly([...list]);
       }
     } catch (e) {
@@ -474,7 +506,7 @@ export default function App() {
           atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "=")),
           (c) => c.charCodeAt(0),
         );
-      const subscription = await registration.pushManager.subscribe({
+      const subscription = await registration.pushManager.getSubscription() ?? await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: bytes,
       });
@@ -527,12 +559,15 @@ export default function App() {
           aria-label={t.save}
           onClick={() => {
             setName("");
+            setEditingId(null);
+            setReminders(false);
             setSaveOpen(true);
           }}
         >
           <Bookmark size={21} />
         </button>
       </div>
+      <ForecastTimeline analysis={analysis} selected={selected} onSelect={setSelected} locale={locale} />
       <RecommendationCard
         analysis={analysis}
         selected={selected}
@@ -555,7 +590,7 @@ export default function App() {
         type="low"
         candidate={analysis.lowest}
       />
-      {analysis.plan.mode === "arrive_by" && (
+      {isArrival(analysis.plan) && (
         <RecommendationCard
           analysis={analysis}
           selected={selected}
@@ -567,6 +602,9 @@ export default function App() {
           type="late"
           candidate={analysis.latest}
         />
+      )}
+      {isArrival(analysis.plan) && analysis.earliest && (
+        <RecommendationCard analysis={analysis} selected={selected} onSelect={setSelected} locale={locale} t={t} navigation={prefs.navigation} title={t.boundaryStart} type="early" candidate={analysis.earliest} />
       )}
       <div className="avoid-card">
         <Clock size={19} />
@@ -616,7 +654,7 @@ export default function App() {
   );
   const planner = (
     <form
-      onSubmit={form.handleSubmit(analyze, () => setError(t.locationMissing))}
+      onSubmit={form.handleSubmit(analyze, errors => setError(errors.latestTime || errors.endDate || errors.date ? t.windowError : t.locationMissing))}
       className="planner-form"
     >
       <div className="section-heading">
@@ -658,9 +696,9 @@ export default function App() {
         />
       </div>
       <div className="mode-tabs" role="group" aria-label={t.plan}>
-        {(["arrive_by", "leave_around", "avoid_traffic"] as const).map(
+        {(["arrive_between", "leave_between"] as const).map(
           (m, i) => {
-            const Icon = [Clock, Navigation, Shield][i];
+            const Icon = [Clock, Navigation][i];
             return (
               <button
                 key={m}
@@ -676,53 +714,22 @@ export default function App() {
           },
         )}
       </div>
+      <p className="micro-copy">{t.windowExplanation}</p>
       <div className="date-time">
-        <label>
-          {t.date}
-          <input
-            type="date"
-            {...form.register("date")}
-            min={localDate(Date.now(), form.getValues("timezone"))}
-          />
-        </label>
-        <label>
-          {mode === "arrive_by" ? t.arrive_by : t.time}
-          <input type="time" {...form.register("time")} />
-        </label>
+        <label>{t.date}<input type="date" {...form.register("date")} min={localDate(Date.now(), form.getValues("timezone"))} /></label>
+        <label>{t.endDate}<input type="date" {...form.register("endDate")} min={form.watch("date")} /></label>
       </div>
-      {mode === "leave_around" && (
-        <label className="range-label">
-          {t.flex}
-          <span>
-            {form.watch("flexibilityMinutes")} {t.minutes}
-          </span>
-          <input
-            type="range"
-            min="15"
-            max="180"
-            step="15"
-            {...form.register("flexibilityMinutes", { valueAsNumber: true })}
-          />
-        </label>
-      )}
-      {mode === "avoid_traffic" && (
-        <div className="date-time">
-          <label>
-            {t.earliest}
-            <input type="time" {...form.register("earliestTime")} />
-          </label>
-          <label>
-            {t.latest}
-            <input type="time" {...form.register("latestTime")} />
-          </label>
-        </div>
-      )}
+      <div className="date-time">
+        <label>{mode === "arrive_between" ? t.earliestArrivalLabel : t.earliest}<input type="time" {...form.register("earliestTime")} /></label>
+        <label>{mode === "arrive_between" ? t.latestArrivalLabel : t.latest}<input type="time" {...form.register("latestTime")} /></label>
+      </div>
       <details className="advanced">
         <summary>
           <span>{t.advanced}</span>
           <ChevronDown size={17} />
         </summary>
         <div className="advanced-fields">
+          <p className="micro-copy">{t.bufferHelp}</p>
           <label>
             {t.buffer}
             <input
@@ -730,15 +737,6 @@ export default function App() {
               min="0"
               max="60"
               {...form.register("safetyBufferMinutes", { valueAsNumber: true })}
-            />
-          </label>
-          <label>
-            {t.earliness}
-            <input
-              type="number"
-              min="30"
-              max="360"
-              {...form.register("maxEarlinessMinutes", { valueAsNumber: true })}
             />
           </label>
           <label>
@@ -1061,13 +1059,13 @@ export default function App() {
                     </div>
                     <div>
                       <Leaf size={20} />
-                      <span>{t.lowest}</span>
+                      <span>{t.shortest}</span>
                       <p>{t.drive}</p>
                     </div>
                     <div>
                       <Shield size={20} />
                       <span>{t.buffer}</span>
-                      <p>{t.arrive_by}</p>
+                      <p>{t.arrive_between}</p>
                     </div>
                   </div>
                 )}
@@ -1148,10 +1146,10 @@ export default function App() {
                                   (best, c) =>
                                     !best ||
                                     Math.abs(
-                                      Date.parse(c.departureAt) - target,
+                                      Date.parse(isArrival(a!.plan) ? c.arrivalAt : c.departureAt) - target,
                                     ) <
                                       Math.abs(
-                                        Date.parse(best.departureAt) - target,
+                                        Date.parse(isArrival(a!.plan) ? best.arrivalAt : best.departureAt) - target,
                                       )
                                       ? c
                                       : best,
@@ -1160,7 +1158,7 @@ export default function App() {
                                 const usable =
                                   c &&
                                   Math.abs(
-                                    Date.parse(c.departureAt) - target,
+                                    Date.parse(isArrival(a!.plan) ? c.arrivalAt : c.departureAt) - target,
                                   ) <=
                                     15 * 60000;
                                 const min = usable
@@ -1300,7 +1298,7 @@ export default function App() {
                       <span>
                         {r.plan.origin.source === "demo"
                           ? t.savedOnDevice
-                          : t[r.plan.mode]}
+                          : t[migratePlan(r.plan).mode]}
                       </span>
                       <span>
                         {r.days.map((d) => t.dayNames[d]).join(" · ")}
@@ -1311,6 +1309,9 @@ export default function App() {
                         <Bell size={14} /> {t.reminders}
                       </p>
                     )}
+                    <button className="button secondary full" onClick={() => {
+                      useRoute(r); setEditingId(r.id); setName(r.name); setDays(r.days); setReminders(r.reminders); setSaveOpen(true);
+                    }}>{t.edit}</button>
                     <button
                       className="button secondary full"
                       onClick={() => useRoute(r)}
@@ -1414,7 +1415,7 @@ export default function App() {
                 </section>
                 <section className="panel">
                   <h2>{t.notifications}</h2>
-                  <p>{t.pushUnavailable}</p>
+                  <p>{push ? t.pushReady : t.pushHelp}</p>
                   <button
                     className="button secondary"
                     disabled={!config.vapidPublicKey || !user}
@@ -1552,7 +1553,7 @@ export default function App() {
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay" />
           <Dialog.Content className="dialog-content">
-            <Dialog.Title>{t.save}</Dialog.Title>
+            <Dialog.Title>{editingId ? t.edit : t.save}</Dialog.Title>
             <Dialog.Description>{t.saveHelp}</Dialog.Description>
             <Dialog.Close className="dialog-close" aria-label={t.close}>
               <X size={20} />
@@ -1568,6 +1569,10 @@ export default function App() {
                 }
               />
             </label>
+            {editingId && <div className="date-time">
+              <label>{isArrival(form.getValues()) ? t.earliestArrivalLabel : t.earliest}<input type="time" value={form.watch("earliestTime")} onChange={e => form.setValue("earliestTime",e.target.value)} /></label>
+              <label>{isArrival(form.getValues()) ? t.latestArrivalLabel : t.latest}<input type="time" value={form.watch("latestTime")} onChange={e => form.setValue("latestTime",e.target.value)} /></label>
+            </div>}
             <p>{t.days}</p>
             <div className="day-picker">
               {t.dayNames.map((d, i) => (
@@ -1591,11 +1596,12 @@ export default function App() {
               <input
                 type="checkbox"
                 checked={reminders}
-                disabled={demo}
+                disabled={demo || (!push && !reminders)}
                 onChange={(e) => setReminders(e.target.checked)}
               />
               {t.reminders}
             </label>
+            {!demo && !push && <p className="micro-copy">{t.pushHelp}</p>}
             <button
               className="button primary full"
               disabled={!name.trim() || !days.length}
@@ -1692,7 +1698,8 @@ function Owner({
     enabled: role === "admin",
     queryFn: () => api<any>("/api/admin/overview"),
   });
-  const [monthly, setMonthly] = useState("25");
+  const [monthly, setMonthly] = useState("0");
+  useEffect(() => { if (q.data) setMonthly(String(q.data.config.monthlyBudget)); }, [q.data]);
   async function update(body: unknown) {
     try {
       await api("/api/admin/config", body, "PATCH");
@@ -1743,7 +1750,7 @@ function Owner({
                 className="button secondary"
                 onClick={() => update({ monthlyBudget: Number(monthly) })}
               >
-                {t.apply}
+                {t.saveChanges}
               </button>
             </div>
           </section>
@@ -1864,7 +1871,7 @@ function RecommendationCard({
 }: {
   candidate: Candidate | null;
   title: string;
-  type: "best" | "low" | "late";
+  type: "best" | "low" | "late" | "early";
   analysis: Analysis;
   selected: Candidate | null;
   onSelect: (c: Candidate | null) => void;
