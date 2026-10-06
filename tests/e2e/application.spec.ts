@@ -106,7 +106,7 @@ test("guest verification exposes the failure code, preserves route text, and sta
   await page.route("**/api/config",route=>route.fulfill({json:{mode:"live",authConfigured:false,searchConfigured:true,trafficConfigured:true,mapConfigured:false,publicBeta:true,turnstileSiteKey:"test-site-key",detectedCountry:"JO"}}));
   await page.route("**/api/guest-session",route=>route.fulfill({json:{verified:false}}));
   // Synthetic SDK only in this test; never a production Turnstile key or challenge bypass.
-  await page.route("https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit",route=>route.fulfill({contentType:"application/javascript",body:`window.turnstile={ready:cb=>cb(),render:(root,options)=>{window.testVerification=options;root.textContent='Human check test fixture';return 'test-widget';},remove:()=>{}};`}));
+  await page.route("https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit",route=>route.fulfill({contentType:"application/javascript",body:`window.turnstile={ready:()=>{throw new Error("async script cannot use ready()");},render:(root,options)=>{window.testVerification=options;root.textContent='Human check test fixture';return 'test-widget';},remove:()=>{}};`}));
   await page.goto("/plan");
   const verification=page.locator(".guest-verification");
   await expect(verification).toContainText("Human check test fixture");
@@ -125,7 +125,7 @@ test("an existing verified guest is restored without loading a challenge and acc
   await page.route("**/api/config",route=>route.fulfill({json:{mode:"live",authConfigured:false,searchConfigured:true,trafficConfigured:true,mapConfigured:false,publicBeta:true,turnstileSiteKey:"test-site-key",detectedCountry:"JO"}}));
   await page.route("**/api/guest-session",route=>route.fulfill({json:verified?{verified:true,expiresAt:Date.now()+3600000}:{verified:false}}));
   let widgetLoads=0;
-  await page.route("https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit",route=>{widgetLoads++;return route.fulfill({contentType:"application/javascript",body:`window.turnstile={ready:cb=>cb(),render:(root)=>{root.textContent='Human check test fixture';return 'test-widget';},remove:()=>{}};`});});
+  await page.route("https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit",route=>{widgetLoads++;return route.fulfill({contentType:"application/javascript",body:`window.turnstile={ready:()=>{throw new Error("async script cannot use ready()");},render:(root)=>{root.textContent='Human check test fixture';return 'test-widget';},remove:()=>{}};`});});
   await page.goto("/plan");
   await expect(page.getByRole("button",{name:"Share location for nearby results"})).toBeEnabled();
   expect(widgetLoads).toBe(0);
