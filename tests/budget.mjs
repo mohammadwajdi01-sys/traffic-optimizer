@@ -18,9 +18,9 @@ writeFileSync(
         catch(e) { return Response.json({error:e.message}, {status:e.status ?? 500}); }
       }
     }
-    export class TestBudgetLedger extends BudgetLedger{constructor(ctx,env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{await ctx.storage.put('config',{paid:false,monthlyBudget:0,providers:{mapbox:{enabled:true,soft:4,hard:5,free:5,pricePerThousand:1,period:'month',rpm:100},google:{enabled:false,soft:4,hard:5,free:5,pricePerThousand:10,period:'month',rpm:10}},countries:{JO:'mapbox'}});});}}`,
+    export class TestBudgetLedger extends BudgetLedger{constructor(ctx,env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{await ctx.storage.put('config',{paid:false,monthlyBudget:0,providers:{mapbox:{enabled:true,soft:4,hard:5,free:5,pricePerThousand:1,period:'month',rpm:100},geoapify:{enabled:true,soft:100,hard:100,free:100,pricePerThousand:1,period:'month',rpm:100},google:{enabled:false,soft:4,hard:5,free:5,pricePerThousand:10,period:'month',rpm:10}},countries:{JO:'mapbox'}});});}}`,
 );
-const upstreamRequests = [];
+const upstreamRequests = [], locationRequests = [];
 const mf = new Miniflare(
   convertV4MiniflareOptions({
     telemetry: { enabled: false },
@@ -34,7 +34,7 @@ const mf = new Miniflare(
         durableObjects: {
           BUDGET: { className: "TestBudgetLedger", useSQLite: true },
         },
-        bindings: { APP_MODE: "setup", PUBLIC_BETA: "false", MAPBOX_SERVER_TOKEN: "private-test-value" },
+        bindings: { APP_MODE: "setup", PUBLIC_BETA: "false", MAPBOX_SERVER_TOKEN: "private-test-value", SUPABASE_URL:"https://account.test", SUPABASE_PUBLISHABLE_KEY:"test-publishable", GEOAPIFY_API_KEY:"test-only" },
         serviceBindings: {
           ASSETS: () => new Response("static"),
           PROVIDER_CHECK: { name: "traffic", entrypoint: "TestProvider" },
@@ -43,6 +43,11 @@ const mf = new Miniflare(
           if (new URL(request.url).hostname === "api.mapbox.com") {
             assert.equal(new URL(request.url).searchParams.get("depart_at"), "2026-10-07T05:30:00Z");
             return Response.json({routes:[{duration:1200,distance:15000,legs:[]}]});
+          }
+          if (new URL(request.url).hostname === "account.test") return Response.json(new URL(request.url).pathname.startsWith("/auth") ? {id:"test-location-user"} : [{role:"user"}]);
+          if (new URL(request.url).hostname === "api.geoapify.com") {
+            locationRequests.push(request.url);
+            return Response.json({features:[{properties:{formatted:"Jordan Museum",lat:31.95,lon:35.91,country_code:"jo"}},{properties:{formatted:"Foreign Museum",lat:24,lon:46,country_code:"sa"}}]});
           }
           upstreamRequests.push(request.url);
           assert.equal(new URL(request.url).hostname, "upstream.test");
@@ -132,6 +137,23 @@ try {
   await call("/update", { monthlyBudget: 1 });
   assert.equal((await call("/reserve", { provider: "mapbox" })).status, 200);
   assert.equal((await call("/reserve", { provider: "mapbox" })).status, 429);
+  async function location(body) { return mf.dispatchFetch("http://local/api/location/suggest",{method:"POST",headers:{Authorization:"Bearer test-session","Content-Type":"application/json"},body:JSON.stringify(body)}); }
+  const localSuggestions = await location({text:"Museum",countryCode:"JO",latitude:31.95,longitude:35.91});
+  assert.equal(localSuggestions.status,200);
+  assert.deepEqual((await localSuggestions.json()).locations.map(l=>l.countryCode),["JO"]);
+  assert.equal(new URL(locationRequests[0]).searchParams.get("filter"),"countrycode:jo");
+  assert.equal(new URL(locationRequests[0]).searchParams.get("bias"),"proximity:35.91,31.95");
+  assert.equal((await location({text:"Museum",countryCode:"XX"})).status,400);
+  assert.equal((await location({text:"Museum",countryCode:"JO",latitude:31.95})).status,400);
+  const missingCountry = await mf.dispatchFetch("http://local/api/location/suggest",{method:"POST",headers:{Authorization:"Bearer test-session"},body:JSON.stringify({text:"Museum"}),cf:{country:"XX"}});
+  assert.equal(missingCountry.status,400);
+  assert.equal(locationRequests.length,1);
+  const inferredCountry = await mf.dispatchFetch("http://local/api/location/suggest",{method:"POST",headers:{Authorization:"Bearer test-session"},body:JSON.stringify({text:"Museum"}),cf:{country:"LY"}});
+  assert.equal(inferredCountry.status,200);
+  assert.equal(new URL(locationRequests[1]).searchParams.get("filter"),"countrycode:ly");
+  assert.deepEqual((await inferredCountry.json()).locations,[]);
+  const configCountry = await mf.dispatchFetch("http://local/api/config",{cf:{country:"JO"}});
+  assert.equal((await configCountry.json()).detectedCountry,"JO");
   const health = await mf.dispatchFetch("http://local/api/health");
   assert.equal(health.status, 200);
   const admin = await mf.dispatchFetch("http://local/api/admin/overview");
@@ -141,7 +163,7 @@ try {
   });
   assert.equal(cors.status, 403);
   console.log(
-    "PASS: real Worker provider fetch and redirect refusal; Durable Object concurrent reservations, free cap, paid budget, disabled provider, guest quota, health, owner access, cross-origin denial.",
+    "PASS: real Worker provider fetch and redirect refusal; Durable Object concurrent reservations, free cap, paid budget, disabled provider, guest quota, country filter/proximity/unknown-country rejection before provider use, health, owner access, cross-origin denial.",
   );
 } finally {
   await mf.dispose();

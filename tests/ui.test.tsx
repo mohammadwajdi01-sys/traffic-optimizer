@@ -13,6 +13,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "../src/App";
 import GuestAccess from "../src/GuestAccess";
 import {LocationField} from "../src/LocationField";
+import {SearchRegion} from "../src/SearchRegion";
+import {freshSearchPosition,useSearchLocation} from "../src/search-location";
 import { useStore } from "../src/store";
 import { defaultPlan } from "../shared/demo";
 const auth = vi.hoisted(() => ({
@@ -26,6 +28,7 @@ vi.mock("@supabase/supabase-js", () => ({ createClient: () => ({ auth }) }));
 beforeEach(() => {
   auth.signInWithOAuth.mockClear();
   localStorage.clear();
+  useSearchLocation.getState().setContext({});
   history.replaceState(null, "", "/");
   useStore.getState().setLocale("en");
   useStore.getState().setDemo(false);
@@ -375,5 +378,60 @@ describe("Coordinate and whole-window regressions", () => {
     await u.clear(dialog.getByLabelText("Latest arrival"));await u.type(dialog.getByLabelText("Latest arrival"),"11:00");
     await u.click(dialog.getByRole("button",{name:"Sat"}));await u.click(dialog.getByRole("button",{name:"Save route"}));
     const rows=JSON.parse(localStorage.getItem("traffic.demoRoutes")!);expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({name:"Updated route",plan:{latestTime:"11:00",mode:"arrive_between"}});expect(rows[0].days).toContain(6);
+  });
+});
+
+
+describe("Location sharing and country search", () => {
+  it("requires a click before GPS, detects the country and clears precise bias on manual country change", async () => {
+    const u = userEvent.setup(), getCurrentPosition = vi.fn((success, _fail, _options) => success({coords:{latitude:31.95,longitude:35.91}}));
+    Object.defineProperty(navigator,"geolocation",{configurable:true,value:{getCurrentPosition}});
+    const request = vi.fn(async () => ({ok:true,json:async () => ({locations:[{countryCode:"JO",timezone:"Asia/Amman"}]})}));
+    vi.stubGlobal("fetch",request);
+    render(<SearchRegion detectedCountry="LY" searchEnabled />);
+    expect(useSearchLocation.getState().countryCode).toBe("LY");
+    expect(getCurrentPosition).not.toHaveBeenCalled();
+    await u.click(screen.getByRole("button",{name:"Share location for nearby results"}));
+    await waitFor(() => expect(useSearchLocation.getState().countryCode).toBe("JO"));
+    expect(getCurrentPosition.mock.calls[0][2]).toMatchObject({maximumAge:0,enableHighAccuracy:true});
+    expect(useSearchLocation.getState().position?.latitude).toBe(31.95);
+    expect(localStorage.getItem("traffic.searchLocation")).toBeNull();
+    await u.selectOptions(screen.getByRole("combobox",{name:"Search country"}),"SA");
+    expect(useSearchLocation.getState().position).toBeUndefined();
+    expect(useSearchLocation.getState().countryCode).toBe("SA");
+  });
+  it("keeps manual country search usable when permission is denied", async () => {
+    const u = userEvent.setup();
+    Object.defineProperty(navigator,"geolocation",{configurable:true,value:{getCurrentPosition:vi.fn((_success,fail) => fail({code:1}))}});
+    render(<SearchRegion detectedCountry="JO" searchEnabled />);
+    await u.click(screen.getByRole("button",{name:"Share location for nearby results"}));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("alert").textContent).toContain("Choose your country to continue");
+    expect(useSearchLocation.getState().countryCode).toBe("JO");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("does not overwrite manual country changes with an older location request", async () => {
+    const u = userEvent.setup();let success:any;
+    Object.defineProperty(navigator,"geolocation",{configurable:true,value:{getCurrentPosition:vi.fn(fn => {success=fn;})}});
+    vi.stubGlobal("fetch",vi.fn(async () => ({ok:true,json:async () => ({locations:[{countryCode:"JO"}]})})));
+    render(<SearchRegion detectedCountry="LY" searchEnabled />);
+    await u.click(screen.getByRole("button",{name:"Share location for nearby results"}));
+    await u.selectOptions(screen.getByRole("combobox",{name:"Search country"}),"SA");
+    await act(async () => {success({coords:{latitude:31.95,longitude:35.91}});});
+    expect(useSearchLocation.getState().countryCode).toBe("SA");
+    expect(useSearchLocation.getState().position).toBeUndefined();
+  });
+  it("sends country and nearby bias to autocomplete and removes foreign results", async () => {
+    const u = userEvent.setup();
+    useSearchLocation.getState().setContext({countryCode:"JO",position:{latitude:31.95,longitude:35.91,capturedAt:Date.now()},source:"gps"});
+    const request = vi.fn(async () => ({ok:true,json:async () => ({locations:[{displayName:"Museum in Amman",countryCode:"JO",latitude:31.9,longitude:35.9},{displayName:"Foreign Museum",countryCode:"SA",latitude:24,longitude:46}]})}));
+    vi.stubGlobal("fetch",request);
+    render(<LocationField label="From" value={null} onChange={vi.fn()} searchEnabled gps />);
+    await u.type(screen.getByRole("combobox"),"Museum");
+    await screen.findByRole("option",{name:"Museum in Amman"});
+    expect(screen.queryByRole("option",{name:"Foreign Museum"})).toBeNull();
+    const input = JSON.parse((request.mock.calls[0] as any)[1].body);
+    expect(input).toMatchObject({countryCode:"JO",latitude:31.95,longitude:35.91});
+    expect(freshSearchPosition({position:{latitude:0,longitude:0,capturedAt:Date.now()-16*60000}})).toBeUndefined();
   });
 });

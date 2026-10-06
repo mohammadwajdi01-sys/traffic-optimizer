@@ -332,3 +332,32 @@ describe("Arabic forecast limitations", () => {
     );
   });
 });
+
+
+describe("Country-scoped location search", () => {
+  it("enforces a real country filter and preserves precise zero coordinates", async () => {
+    const {locationQuery,locationSearchSchema,countryCodes} = await import("../shared/location-search");
+    expect(new Set(countryCodes).size).toBe(249);
+    const search = locationQuery("/api/location/suggest",locationSearchSchema.parse({text:"Main street",countryCode:"jo",latitude:0,longitude:0}));
+    expect(search.query.get("filter")).toBe("countrycode:jo");
+    expect(search.query.get("bias")).toBe("proximity:0,0");
+    expect(search.endpoint).toBe("autocomplete");
+  });
+  it("uses an explicit country before network fallback and never silently searches worldwide", async () => {
+    const {locationQuery,locationSearchSchema} = await import("../shared/location-search");
+    expect(locationQuery("/api/location/suggest",locationSearchSchema.parse({text:"Museum"}),"LY").query.get("filter")).toBe("countrycode:ly");
+    expect(locationQuery("/api/location/suggest",locationSearchSchema.parse({text:"Museum",countryCode:"SA"}),"JO").query.get("bias")).toBe("countrycode:sa");
+    expect(() => locationQuery("/api/location/suggest",locationSearchSchema.parse({text:"Museum"}),"XX")).toThrow("Choose your search country");
+    expect(() => locationSearchSchema.parse({text:"Museum",countryCode:"XX"})).toThrow();
+    expect(() => locationSearchSchema.parse({text:"Museum",latitude:0})).toThrow();
+    expect(() => locationSearchSchema.parse({text:"Museum",latitude:Infinity,longitude:0})).toThrow();
+  });
+  it("reverse geocodes GPS without filtering it to a stale manually selected country", async () => {
+    const {locationQuery,locationSearchSchema} = await import("../shared/location-search");
+    const search = locationQuery("/api/location/reverse",locationSearchSchema.parse({latitude:31.95,longitude:35.91,countryCode:"LY",language:"ar"}));
+    expect(search.query.get("filter")).toBeNull();
+    expect(search.country).toBeUndefined();
+    expect(search.query.get("lang")).toBe("ar");
+    expect(() => locationQuery("/api/location/unrecognized",locationSearchSchema.parse({}))).toThrow();
+  });
+});

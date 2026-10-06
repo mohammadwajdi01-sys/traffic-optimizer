@@ -67,6 +67,7 @@ export type SavedRoute = {
   createdAt?: string;
 };
 export type AppConfig = {
+  detectedCountry?: string;
   mode: "setup" | "live";
   authConfigured: boolean;
   googleAuthEnabled?: boolean;

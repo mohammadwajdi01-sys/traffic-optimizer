@@ -1774,3 +1774,9 @@ input[type="range"] {
 .manual-panel { z-index: 15; max-height: 80vh; overflow-y: auto; }
 .manual-panel .field-error { position: static; display: block; width: 100%; }
 @media (max-width: 600px) { .forecast-timeline { padding: 12px; } .forecast-timeline svg text { font-size: 15px; } }
+
+.search-region { padding: 14px; border: 1px solid var(--border, #e4e7ec); border-radius: 16px; margin-bottom: 16px; background: var(--surface, #fff); }
+.search-region label { display: grid; gap: 7px; font-weight: 600; }
+.search-region select { width: 100%; min-height: 44px; padding: 9px; border: 1px solid #d3d9e1; border-radius: 10px; font: inherit; background: #fff; color: #172b4d; }
+.search-region .button { width: 100%; min-height: 44px; }
+.search-region .text-button { min-height: 44px; font: inherit; }

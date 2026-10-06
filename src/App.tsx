@@ -54,6 +54,7 @@ import { isArrival, isWindowPlan, migratePlan, recurringPlan } from "../shared/w
 import { ForecastTimeline } from "./ForecastTimeline";
 import GuestAccess from "./GuestAccess";
 import { LocationField } from "./LocationField";
+import { SearchRegion } from "./SearchRegion";
 import { MapPreview } from "./MapPreview";
 const setupConfig: AppConfig = {
   mode: "setup",
@@ -668,6 +669,7 @@ export default function App() {
         </div>
         <SlidersHorizontal size={20} />
       </div>
+      {!demo && <SearchRegion detectedCountry={config.detectedCountry} searchEnabled={config.searchConfigured && Boolean(user || guestReady)} />}
       <div className="locations">
         <LocationField
           label={t.from}
@@ -1506,6 +1508,7 @@ export default function App() {
               <h1>{page === "privacy" ? t.privacyPolicy : t.terms}</h1>
               <p>{page === "privacy" ? t.privacyCopy : t.termsCopy}</p>
               <p>{t.localPrivacy}</p>
+              <p>{t.searchLocationPrivacy}</p>
               <p>{t.measurementHelp}</p>
               <p>{t.navigateTimeHelp}</p>
               <a
