@@ -1758,3 +1758,19 @@ input[type="range"] {
   background: #1c79fa;
   color: white;
 }
+
+/* Full selected interval, with checked points distinct from interpolation. */
+.mode-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.forecast-timeline { background: #fff; border: 1px solid #e5eaf1; border-radius: 20px; padding: 20px; margin-bottom: 18px; min-width: 0; }
+.forecast-timeline h3 { margin: 0 0 8px; }
+.forecast-timeline svg { width: 100%; height: auto; display: block; overflow: visible; direction: ltr; }
+.forecast-timeline svg text { font-size: 13px; fill: #44546a; }
+.chart-grid { stroke: #e7edf5; }
+.chart-interpolation { stroke: #7aa6e6; stroke-width: 2; stroke-dasharray: 5 5; }
+.chart-point { fill: #0866ff; stroke: white; stroke-width: 1.5; }
+.chart-best { fill: #128453; stroke: white; stroke-width: 2; }
+.chart-outside { fill: #9ca8b8; }
+.timeline-choice { border-radius: 10px; padding: 10px; background: #edf5ff; font-weight: 600; }
+.manual-panel { z-index: 15; max-height: 80vh; overflow-y: auto; }
+.manual-panel .field-error { position: static; display: block; width: 100%; }
+@media (max-width: 600px) { .forecast-timeline { padding: 12px; } .forecast-timeline svg text { font-size: 15px; } }

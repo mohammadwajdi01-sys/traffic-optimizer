@@ -1,7 +1,14 @@
 import type { Analysis, Candidate, Plan } from "./types";
 import { iso, localInstant } from "./time";
+import { isArrival, isWindowPlan, selectedWindow } from "./windows";
+import { optimizeWindow } from "./window-optimizer";
 export type Forecast = (departureAt: string) => Promise<Candidate>;
 export function windowFor(p: Plan, now = Date.now()): [number, number] {
+  if (isWindowPlan(p)) {
+    const [start, end] = selectedWindow(p);
+    if (end < now) throw new Error("This travel window has passed. Choose a later time or date.");
+    return [Math.max(start, Math.ceil(now / 60000) * 60000), end];
+  }
   const target = localInstant(p.date, p.time, p.timezone);
   let start: number, end: number;
   if (p.mode === "arrive_by") {
@@ -26,6 +33,11 @@ export function windowFor(p: Plan, now = Date.now()): [number, number] {
 }
 export function feasible(c: Candidate, p: Plan): boolean {
   const a = Date.parse(c.arrivalAt);
+  if (isWindowPlan(p)) {
+    const [start, end] = selectedWindow(p);
+    const t = isArrival(p) ? a : Date.parse(c.departureAt);
+    return t >= start && t <= end - (isArrival(p) ? p.safetyBufferMinutes * 60000 : 0);
+  }
   if (
     p.mode === "arrive_by" &&
     a > localInstant(p.date, p.time, p.timezone) - p.safetyBufferMinutes * 60000
@@ -40,6 +52,7 @@ export function feasible(c: Candidate, p: Plan): boolean {
 }
 export function score(c: Candidate, p: Plan): number {
   if (!feasible(c, p)) return Infinity;
+  if (isWindowPlan(p)) return c.durationSeconds / 60;
   const duration = c.durationSeconds / 60,
     departure = Date.parse(c.departureAt),
     arrival = Date.parse(c.arrivalAt),
@@ -49,7 +62,7 @@ export function score(c: Candidate, p: Plan): number {
       ? 0
       : Math.max(0, duration - c.staticDurationSeconds / 60);
   const early =
-    p.mode === "arrive_by"
+    isArrival(p)
       ? Math.max(
           0,
           ((p.preferredArrivalStart
@@ -98,13 +111,14 @@ export function summarize(
     (a, b) => metric(a) - metric(b) || score(a, p) - score(b, p),
   );
   const latest =
-    p.mode === "arrive_by"
+    isArrival(p)
       ? ([...valid].sort(
           (a, b) => Date.parse(b.departureAt) - Date.parse(a.departureAt),
         )[0] ?? null)
       : null;
-  const baseline = Math.min(...samples.map((c) => c.durationSeconds));
-  const bad = samples
+  const compared = isWindowPlan(p) ? valid : samples;
+  const baseline = Math.min(...compared.map((c) => c.durationSeconds));
+  const bad = compared
     .filter(
       (c) =>
         c.durationSeconds >= baseline * 1.3 &&
@@ -143,6 +157,7 @@ export async function optimize(
   forecast: Forecast,
   options: { maxCalls?: number; now?: number } = {},
 ): Promise<Analysis> {
+  if (isWindowPlan(p)) return optimizeWindow(p, forecast, options);
   const max = options.maxCalls ?? 24,
     now = options.now ?? Date.now(),
     [start, end] = windowFor(p, now),

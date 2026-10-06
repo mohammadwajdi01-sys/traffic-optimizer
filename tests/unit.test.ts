@@ -15,7 +15,7 @@ import { defaultPlan, demoForecast } from "../shared/demo";
 import { normalizeGeoapify, normalizeGoogle, normalizeMapbox } from "../worker/providers";
 import { planSchema } from "../shared/schema";
 import type { Candidate, Plan } from "../shared/types";
-const p: Plan = { ...defaultPlan(), date: "2026-10-06", time: "09:00" };
+const p: Plan = { ...defaultPlan(), mode: "arrive_by", safetyBufferMinutes: 10, date: "2026-10-06", time: "09:00" };
 const now = localInstant(p.date, "04:00", p.timezone);
 it("allows provider search results with long opaque place IDs to be planned", () => {
   const [origin] = normalizeGeoapify({features: [{properties: {

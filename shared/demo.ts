@@ -54,14 +54,14 @@ export function defaultPlan(): Plan {
   return {
     origin: demoLocations[0],
     destination: demoLocations[1],
-    mode: "arrive_by",
+    mode: "arrive_between",
     date: localDate(Date.now() + 86400000, "Asia/Amman"),
     time: "09:00",
     timezone: "Asia/Amman",
     flexibilityMinutes: 60,
-    safetyBufferMinutes: 10,
+    safetyBufferMinutes: 0,
     maxEarlinessMinutes: 180,
-    earliestTime: "06:00",
+    earliestTime: "08:00",
     latestTime: "10:00",
   };
 }

@@ -1,10 +1,11 @@
 import type { Plan } from "./types";
 import { windowFor } from "./optimizer";
 import { addDays, localInstant } from "./time";
+import { isWindowPlan } from "./windows";
 
 export function liveWindow(p: Plan, now = Date.now()) {
   const window = windowFor(p, now);
-  const target = localInstant(
+  const target = isWindowPlan(p) ? window[1] : localInstant(
     p.date,
     p.mode === "avoid_traffic" ? p.latestTime : p.time,
     p.timezone,
@@ -17,7 +18,7 @@ export function liveWindow(p: Plan, now = Date.now()) {
 // Keep all seven date positions, including unavailable dates, for the weekly grid.
 export function weeklyPlans(p: Plan, now = Date.now()): (Plan | null)[] {
   return Array.from({ length: 7 }, (_, i) => {
-    const day = { ...p, date: addDays(p.date, i) };
+    const day = { ...p, date: addDays(p.date, i), endDate: p.endDate ? addDays(p.endDate, i) : undefined };
     try {
       if (!p.demo) liveWindow(day, now);
       return day;

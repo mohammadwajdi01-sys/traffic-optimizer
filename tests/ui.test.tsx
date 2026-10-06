@@ -12,6 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "../src/App";
 import GuestAccess from "../src/GuestAccess";
+import {LocationField} from "../src/LocationField";
 import { useStore } from "../src/store";
 import { defaultPlan } from "../shared/demo";
 const auth = vi.hoisted(() => ({
@@ -146,7 +147,7 @@ describe("Application interactions without service credentials", () => {
     const a = useStore.getState().analysis;
     expect(a?.best).not.toBeNull();
     expect(Date.parse(a!.best!.arrivalAt)).toBeLessThanOrEqual(
-      Date.parse(a!.plan.date + "T06:00:00Z") - 600000,
+      Date.parse(a!.plan.date + "T07:00:00Z"),
     );
     expect(a!.samples.every((c) => c.provider === "demo")).toBe(true);
     const link = within(document.querySelector(".result-card.best")!).getByRole(
@@ -196,7 +197,7 @@ describe("Application interactions without service credentials", () => {
     await waitFor(() =>
       expect(document.querySelectorAll(".day-summary").length).toBe(7),
     );
-    expect(document.querySelectorAll(".heat-cell").length).toBe(49);
+    expect(document.querySelectorAll(".heat-cell").length).toBe(35);
     await u.click(screen.getByRole("button", { name: "ع" }));
     expect(document.documentElement.dir).toBe("rtl");
     await screen.findByRole("heading", { name: "أسبوعك بازدحام أقل" });
@@ -217,10 +218,12 @@ describe("Application interactions without service credentials", () => {
     await u.click(
       await screen.findByRole("button", { name: "Try an example" }),
     );
-    await u.click(screen.getByRole("button", { name: "Leave around" }));
-    const time = screen.getByLabelText("Time");
+    await u.click(screen.getByRole("button", { name: "Leave between" }));
+    const time = screen.getByLabelText("Earliest departure");
     await u.clear(time);
     await u.type(time, "16:00");
+    await u.clear(screen.getByLabelText("Latest departure"));
+    await u.type(screen.getByLabelText("Latest departure"), "18:00");
     await u.click(
       within(document.querySelector(".sidebar")!).getByRole("link", {
         name: "Week",
@@ -315,5 +318,59 @@ describe("Weekly sign-in and Google login", () => {
       provider: "google",
       options: { redirectTo: location.origin + "/settings" },
     });
+  });
+});
+
+describe("Coordinate and whole-window regressions", () => {
+  it("accepts pasted public coordinates and applies them without submitting the planner", async () => {
+    const u=userEvent.setup(), change=vi.fn(), submit=vi.fn(e=>e.preventDefault());
+    render(<form onSubmit={submit}><LocationField label="From" value={null} onChange={change} searchEnabled={false} gps /></form>);
+    await u.click(screen.getByRole("combobox",{name:"From"}));
+    await u.click(screen.getByRole("button",{name:"Use coordinates"}));
+    await u.type(screen.getByLabelText("Paste coordinates (latitude, longitude)"),"31.9455631, 35.9271963");
+    await u.click(screen.getByRole("button",{name:"Use location"}));
+    expect(change).toHaveBeenLastCalledWith(expect.objectContaining({latitude:31.9455631,longitude:35.9271963,timezone:"Asia/Amman",source:"manual"}));
+    expect(screen.queryByLabelText("Latitude")).toBeNull(); expect(submit).not.toHaveBeenCalled();
+  });
+  it("accepts zero, signed coordinates and Arabic decimal digits",async()=>{
+    const u=userEvent.setup(), change=vi.fn();
+    render(<LocationField label="From" value={null} onChange={change} searchEnabled={false} gps />);
+    await u.click(screen.getByRole("combobox",{name:"From"}));await u.click(screen.getByRole("button",{name:"Use coordinates"}));
+    await u.type(screen.getByLabelText("Latitude"),"٠");await u.type(screen.getByLabelText("Longitude"),"−٣٥٫٩٢");
+    await u.click(screen.getByRole("button",{name:"Use location"}));
+    expect(change).toHaveBeenLastCalledWith(expect.objectContaining({latitude:0,longitude:-35.92}));
+  });
+  it("shows specific coordinate/timezone errors and Cancel preserves a prior selection",async()=>{
+    const u=userEvent.setup(), change=vi.fn(), location={displayName:"Landmark",latitude:31.9,longitude:35.9,timezone:"Asia/Amman"};
+    render(<LocationField label="From" value={location} onChange={change} searchEnabled={false} gps />);
+    await u.click(screen.getByRole("combobox",{name:"From"}));await u.click(screen.getByRole("button",{name:"Use coordinates"}));
+    await u.clear(screen.getByLabelText("Latitude"));await u.type(screen.getByLabelText("Latitude"),"Infinity");
+    await u.click(screen.getByRole("button",{name:"Use location"}));expect(screen.getByRole("alert").textContent).toContain("−90 to 90");expect(change).not.toHaveBeenCalled();
+    await u.clear(screen.getByLabelText("Latitude"));await u.type(screen.getByLabelText("Latitude"),"32");
+    await u.clear(screen.getByLabelText("Origin timezone"));await u.type(screen.getByLabelText("Origin timezone"),"invalid");
+    await u.click(screen.getByRole("button",{name:"Use location"}));expect(screen.getByRole("alert").textContent).toContain("valid timezone");
+    await u.click(screen.getByRole("button",{name:"Cancel"}));expect(screen.getByRole("combobox",{name:"From"}).getAttribute("value")).toBe("Landmark");expect(change).not.toHaveBeenCalled();
+  });
+  it("exposes only two modes, renders both chart endpoints and invalidates results on input edits",async()=>{
+    const u=userEvent.setup();mount();await u.click(await screen.findByRole("button",{name:"Try an example"}));
+    expect(screen.queryByRole("button",{name:"Avoid traffic"})).toBeNull();expect(screen.queryByLabelText("Explore up to this many minutes earlier")).toBeNull();
+    await u.click(screen.getByRole("button",{name:"Find best time"}));await screen.findByRole("heading",{name:"Best times to leave"});
+    const chart=screen.getByRole("region",{name:"Your complete time window"});
+    expect(chart.textContent).toContain("8:00 AM");expect(chart.textContent).toContain("10:00 AM");expect(chart.textContent).toContain("Estimated arrival time");
+    await u.click(within(document.querySelector(".sidebar")!).getByRole("link",{name:"Plan"}));
+    await u.clear(screen.getByLabelText("Latest arrival"));await u.type(screen.getByLabelText("Latest arrival"),"11:00");
+    expect(useStore.getState().analysis).toBeNull();
+  });
+  it("edits a saved route's name, bounds and days and restores the updated values",async()=>{
+    const u=userEvent.setup();mount();await u.click(await screen.findByRole("button",{name:"Try an example"}));
+    await u.click(screen.getByRole("button",{name:"Find best time"}));await screen.findByRole("heading",{name:"Best times to leave"});
+    await u.click(screen.getByRole("button",{name:"Save route"}));await u.type(screen.getByLabelText("Route name"),"Old route");
+    await u.click(within(screen.getByRole("dialog")).getByRole("button",{name:"Save route"}));
+    await u.click(within(document.querySelector(".sidebar")!).getByRole("link",{name:"Routes"}));
+    await u.click(screen.getByRole("button",{name:"Edit route"}));const dialog=within(screen.getByRole("dialog"));
+    await u.clear(dialog.getByLabelText("Route name"));await u.type(dialog.getByLabelText("Route name"),"Updated route");
+    await u.clear(dialog.getByLabelText("Latest arrival"));await u.type(dialog.getByLabelText("Latest arrival"),"11:00");
+    await u.click(dialog.getByRole("button",{name:"Sat"}));await u.click(dialog.getByRole("button",{name:"Save route"}));
+    const rows=JSON.parse(localStorage.getItem("traffic.demoRoutes")!);expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({name:"Updated route",plan:{latestTime:"11:00",mode:"arrive_between"}});expect(rows[0].days).toContain(6);
   });
 });
