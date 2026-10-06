@@ -124,18 +124,24 @@ describe("Guest verification recovery", () => {
     await waitFor(()=>expect(ready).toHaveBeenCalledWith(expiresAt));
     expect(widget).not.toHaveBeenCalled();
   });
-  it("waits for SDK readiness and ignores a stale readiness callback after refresh", async () => {
-    const callbacks: (()=>void)[] = []; const widget=vi.fn(()=>"id");
-    vi.stubGlobal("turnstile", {ready:(cb:()=>void)=>callbacks.push(cb),render:widget,remove:vi.fn()});
+  it("uses explicit rendering after async script load without calling the incompatible ready API", async () => {
+    document.getElementById("turnstile-script")?.remove();
+    const widget=vi.fn(()=>"id");
+    const incompatibleReady=vi.fn(()=>{throw new Error("Remove async/defer before using ready()");});
     render(<GuestAccess siteKey="test-site-key" onReady={vi.fn()} onError={vi.fn()}/>);
-    await waitFor(()=>expect(callbacks).toHaveLength(1));
+    await waitFor(()=>expect(document.getElementById("turnstile-script")).not.toBeNull());
+    const script=document.getElementById("turnstile-script") as HTMLScriptElement;
+    expect(script.async).toBe(true);
     expect(widget).not.toHaveBeenCalled();
-    act(()=>callbacks[0]());
+    vi.stubGlobal("turnstile",{ready:incompatibleReady,render:widget,remove:vi.fn()});
+    act(()=>script.dispatchEvent(new Event("load")));
     expect(widget).toHaveBeenCalledTimes(1);
+    expect(incompatibleReady).not.toHaveBeenCalled();
     await userEvent.setup().click(screen.getByRole("button",{name:"Refresh verification"}));
-    await waitFor(()=>expect(callbacks).toHaveLength(2));
-    act(()=>{callbacks[0](); callbacks[1](); callbacks[1]();});
+    await waitFor(()=>expect(widget).toHaveBeenCalledTimes(2));
+    act(()=>script.dispatchEvent(new Event("load")));
     expect(widget).toHaveBeenCalledTimes(2);
+    expect(incompatibleReady).not.toHaveBeenCalled();
   });
   it("submits a challenge once and ignores old challenge callbacks after refresh", async () => {
     const options:any[]=[]; let release:(v:any)=>void=()=>{};

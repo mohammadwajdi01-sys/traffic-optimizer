@@ -129,8 +129,8 @@ export default function GuestAccess({
     };
     const scriptReady = () => {
       if (stopped) return;
-      if (w.turnstile?.ready) w.turnstile.ready(render);
-      else render();
+      // Explicit rendering starts after script load. ready() rejects async scripts.
+      render();
     };
     const scriptError = () => {
       if (script) script.dataset.loadState = "failed";
