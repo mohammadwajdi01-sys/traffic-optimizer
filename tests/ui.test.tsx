@@ -344,6 +344,9 @@ describe("Coordinate and whole-window regressions", () => {
     const u=userEvent.setup(), change=vi.fn(), location={displayName:"Landmark",latitude:31.9,longitude:35.9,timezone:"Asia/Amman"};
     render(<LocationField label="From" value={location} onChange={change} searchEnabled={false} gps />);
     await u.click(screen.getByRole("combobox",{name:"From"}));await u.click(screen.getByRole("button",{name:"Use coordinates"}));
+    await u.type(screen.getByLabelText("Paste coordinates (latitude, longitude)"),"31.9, 35.9, 52");
+    await u.click(screen.getByRole("button",{name:"Use location"}));expect(screen.getByRole("alert").textContent).toContain("−90 to 90");expect(change).not.toHaveBeenCalled();
+    await u.clear(screen.getByLabelText("Paste coordinates (latitude, longitude)"));
     await u.clear(screen.getByLabelText("Latitude"));await u.type(screen.getByLabelText("Latitude"),"Infinity");
     await u.click(screen.getByRole("button",{name:"Use location"}));expect(screen.getByRole("alert").textContent).toContain("−90 to 90");expect(change).not.toHaveBeenCalled();
     await u.clear(screen.getByLabelText("Latitude"));await u.type(screen.getByLabelText("Latitude"),"32");

@@ -374,6 +374,7 @@ export default function App() {
     setError("");
     setBusy(true);
     setWeekly([]);
+    const version = ++requestVersion.current;
     const list: (Analysis | null)[] = [];
     const p = {
       ...form.getValues(),
@@ -401,6 +402,7 @@ export default function App() {
       }
       if (count < 7) setNotice(t.weekHorizon);
       for (let i = 0; i < 7; i++) {
+        if (version !== requestVersion.current) return;
         setWeekProgress(i + 1);
         const day = days[i];
         if (!day) {
@@ -426,6 +428,7 @@ export default function App() {
             break;
           }
         }
+        if (version !== requestVersion.current) return;
         setWeekly([...list]);
       }
     } catch (e) {

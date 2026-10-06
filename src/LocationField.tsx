@@ -29,6 +29,7 @@ export function LocationField({
     [manual, setManual] = useState(false),
     [lat, setLat] = useState(""),
     [lng, setLng] = useState(""),
+    [pair, setPair] = useState(""),
     [tz, setTz] = useState("Asia/Amman");
   const seq = useRef(0),
     root = useRef<HTMLDivElement>(null);
@@ -120,7 +121,7 @@ export function LocationField({
         setBusy(false);
         setError(t.gpsDenied);
       },
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
     );
   }
   return (
@@ -222,6 +223,7 @@ export function LocationField({
             <button
               type="button"
               onClick={() => {
+                setPair("");
                 setLat(value ? String(value.latitude) : "");
                 setLng(value ? String(value.longitude) : "");
                 setTz(value?.timezone || "Asia/Amman");
@@ -240,7 +242,8 @@ export function LocationField({
       {manual && (
         <div className="manual-panel">
           <p>{t.manualHelp}</p>
-          <label>{t.coordinatePair}<input type="text" dir="ltr" placeholder="31.9455631, 35.9271963" onChange={e => {
+          <label>{t.coordinatePair}<input type="text" dir="ltr" placeholder="31.9455631, 35.9271963" value={pair} onChange={e => {
+            setPair(e.target.value);
             const parts = normalizeDigits(e.target.value).trim().split(/[,;\s]+/).filter(Boolean);
             if (parts.length === 2) { setLat(parts[0]); setLng(parts[1]); setError(""); }
           }} /></label>
@@ -251,7 +254,7 @@ export function LocationField({
               inputMode="decimal"
               dir="ltr"
               value={lat}
-              onChange={(e) => setLat(e.target.value)}
+              onChange={(e) => {setLat(e.target.value); setPair("");}}
             />
           </label>
           <label>
@@ -261,7 +264,7 @@ export function LocationField({
               inputMode="decimal"
               dir="ltr"
               value={lng}
-              onChange={(e) => setLng(e.target.value)}
+              onChange={(e) => {setLng(e.target.value); setPair("");}}
             />
           </label>
           <label>
@@ -271,13 +274,14 @@ export function LocationField({
           <button
             type="button"
             onClick={() => {
+              if (pair.trim() && normalizeDigits(pair).trim().split(/[,;\s]+/).filter(Boolean).length !== 2) { setError(t.coordinateError); return; }
               const a = coordinateNumber(lat), b = coordinateNumber(lng), timezone = tz.trim();
               if (!Number.isFinite(a) || !Number.isFinite(b) || Math.abs(a) > 90 || Math.abs(b) > 180) {
                 setError(t.coordinateError); return;
               }
               try { new Intl.DateTimeFormat("en", {timeZone: timezone || "invalid"}); }
               catch { setError(t.timezoneError); return; }
-              onChange({displayName: value?.displayName || `${a}, ${b}`, latitude: a, longitude: b, timezone, source: "manual"});
+              onChange({displayName: value && value.latitude === a && value.longitude === b ? value.displayName : `${a}, ${b}`, latitude: a, longitude: b, timezone, source: "manual"});
               setError(""); setManual(false); setOpen(false);
             }}
           >
@@ -294,7 +298,7 @@ export function LocationField({
 }
 
 function normalizeDigits(text: string) {
-  return text.replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632)).replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 1776)).replace(/٫/g, ".").replace(/−/g, "-");
+  return text.replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632)).replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 1776)).replace(/،/g, ",").replace(/٫/g, ".").replace(/−/g, "-");
 }
 function coordinateNumber(text: string) {
   const value = normalizeDigits(text).trim().replace(",", ".");
