@@ -1,4 +1,17 @@
 import { test, expect } from "@playwright/test";
+test("country search defaults visibly and supports manual choice and Arabic on small screens", async ({page}) => {
+  await page.route("**/api/config",route => route.fulfill({json:{mode:"setup",authConfigured:false,searchConfigured:false,trafficConfigured:false,mapConfigured:false,publicBeta:false,detectedCountry:"JO"}}));
+  await page.goto("/plan");
+  const country = page.getByRole("combobox",{name:"Search country"});
+  await expect(country).toHaveValue("JO");
+  await expect(page.getByRole("button",{name:"Share location for nearby results"})).toBeDisabled();
+  await country.selectOption("LY");
+  await expect(country).toHaveValue("LY");
+  await page.getByRole("button",{name:"ع",exact:true}).click();
+  await expect(page.getByRole("combobox",{name:"بلد البحث"})).toHaveValue("LY");
+  await expect(page.getByRole("button",{name:"مشاركة الموقع لعرض الأماكن القريبة"})).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
 test("plans an example, respects the deadline, saves a route and opens navigation", async ({
   page,
 }) => {

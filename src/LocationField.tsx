@@ -5,6 +5,7 @@ import { demoLocations } from "../shared/demo";
 import { api } from "./api";
 import { en, ar } from "./i18n";
 import { useStore } from "./store";
+import { browserLocation, freshSearchPosition, useSearchLocation } from "./search-location";
 export function LocationField({
   label,
   value,
@@ -31,6 +32,7 @@ export function LocationField({
     [lng, setLng] = useState(""),
     [pair, setPair] = useState(""),
     [tz, setTz] = useState("Asia/Amman");
+  const searchContext = useSearchLocation(), position = freshSearchPosition(searchContext);
   const seq = useRef(0),
     root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -46,6 +48,7 @@ export function LocationField({
   useEffect(() => {
     const run = ++seq.current;
     setActive(-1);
+    setList([]); setBusy(false);
     if (!open) return;
     if (demo) {
       setList(
@@ -55,7 +58,7 @@ export function LocationField({
       );
       return;
     }
-    if (!searchEnabled || text.trim().length < 3) {
+    if (!searchEnabled || !searchContext.countryCode || text.trim().length < 3) {
       setList([]);
       return;
     }
@@ -64,9 +67,9 @@ export function LocationField({
       try {
         const res = await api<{ locations: Location[] }>(
           "/api/location/suggest",
-          { text, language: locale },
+          { text, language: locale, countryCode: searchContext.countryCode, latitude: position?.latitude, longitude: position?.longitude },
         );
-        if (run === seq.current) setList(res.locations);
+        if (run === seq.current) setList(res.locations.filter(l => l.countryCode?.toUpperCase() === searchContext.countryCode));
       } catch (e) {
         if (run === seq.current)
           setError(locale === "ar" ? t.error : (e as Error).message);
@@ -75,54 +78,15 @@ export function LocationField({
       }
     }, 400);
     return () => clearTimeout(timer);
-  }, [text, open, searchEnabled, demo, locale, t.error]);
+  }, [text, open, searchEnabled, demo, locale, t.error, searchContext.countryCode, position?.latitude, position?.longitude]);
   async function locate() {
-    if (!navigator.geolocation) { setError(t.gpsDenied); return; }
-    setBusy(true);
-    setError("");
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const base: Location = {
-          displayName: t.current,
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          source: "gps",
-        };
-        try {
-          if (searchEnabled) {
-            const r = await api<{ locations: Location[] }>(
-              "/api/location/reverse",
-              {
-                latitude: base.latitude,
-                longitude: base.longitude,
-                language: locale,
-              },
-            );
-            onChange({
-              ...base,
-              timezone: r.locations[0]?.timezone,
-              countryCode: r.locations[0]?.countryCode,
-            });
-          } else
-            onChange({
-              ...base,
-              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-            });
-        } catch {
-          onChange({
-            ...base,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          });
-        } finally {
-          setBusy(false);
-        }
-      },
-      () => {
-        setBusy(false);
-        setError(t.gpsDenied);
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
-    );
+    setBusy(true);setError("");
+    try {
+      const location = await browserLocation(locale, searchEnabled);
+      onChange({...location, displayName:t.current});
+      if (location.countryCode) searchContext.setContext({countryCode:location.countryCode,position:{latitude:location.latitude,longitude:location.longitude,capturedAt:Date.now()},source:"gps"});
+    } catch { setError(t.gpsDenied); }
+    finally { setBusy(false); }
   }
   return (
     <div className="location-field" ref={root}>
@@ -182,6 +146,7 @@ export function LocationField({
         <button
           type="button"
           className="icon-button"
+          disabled={busy}
           title={t.current}
           aria-label={t.current}
           onClick={locate}
@@ -216,7 +181,7 @@ export function LocationField({
             ))
           )}
           {!busy && !list.length && (
-            <div className="muted">{t.noSuggestions}</div>
+            <div className="muted">{!demo && !searchContext.countryCode ? t.chooseCountry : t.noSuggestions}</div>
           )}
           {demo && <small>{t.examples}</small>}
           {!demo && (

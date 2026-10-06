@@ -7,6 +7,7 @@ import { db, identity } from "./database";
 import { createForecast, normalizeGeoapify, remote } from "./providers";
 import { scheduledReminders } from "./notifications";
 import { createGuestSession } from "./guest";
+import { countryCode, locationQuery, locationSearchSchema } from "../shared/location-search";
 export { BudgetLedger } from "./budget";
 const security = {
   "Cache-Control": "no-store",
@@ -67,6 +68,7 @@ async function api(request: Request, env: Env) {
       turnstileSiteKey: env.TURNSTILE_SITE_KEY,
       vapidPublicKey: env.VAPID_PUBLIC_KEY,
       publicBeta: env.PUBLIC_BETA === "true",
+      detectedCountry: countryCode(request.cf?.country),
     });
   if (path === "/api/health" && request.method === "GET")
     return reply({ ok: true, mode: env.APP_MODE ?? "setup", version: "0.1.0" });
@@ -113,40 +115,19 @@ async function api(request: Request, env: Env) {
     return reply({ token: env.MAPBOX_PUBLIC_TOKEN });
   }
   if (path.startsWith("/api/location/") && request.method === "POST") {
-    const input = z
-      .object({
-        text: z.string().min(3).max(200).optional(),
-        latitude: z.number().min(-90).max(90).optional(),
-        longitude: z.number().min(-180).max(180).optional(),
-        language: z.enum(["en", "ar"]).default("en"),
-        turnstileToken: z.string().optional(),
-      })
-      .parse(await body(request));
+    const input = locationSearchSchema.parse(await body(request));
+    let search;
+    try { search = locationQuery(path, input, request.cf?.country); }
+    catch (error) { throw new ApiError(400, (error as Error).message); }
     if (!env.GEOAPIFY_API_KEY)
       throw new ApiError(503, "Location search is not configured yet.");
     await budget(env, "/reserve", { provider: "geoapify" });
-    const q = new URLSearchParams({
-      apiKey: env.GEOAPIFY_API_KEY,
-      lang: input.language,
-      limit: "5",
-    });
-    let endpoint = "autocomplete";
-    if (path.endsWith("reverse")) {
-      if (input.latitude === undefined || input.longitude === undefined)
-        throw new ApiError(400, "Coordinates are required.");
-      endpoint = "reverse";
-      q.set("lat", String(input.latitude));
-      q.set("lon", String(input.longitude));
-    } else {
-      if (!input.text) throw new ApiError(400, "Type a location.");
-      q.set("text", input.text);
-      if (input.latitude !== undefined && input.longitude !== undefined)
-        q.set("bias", `proximity:${input.longitude},${input.latitude}`);
-    }
+    const q = search.query, endpoint = search.endpoint;
+    q.set("apiKey", env.GEOAPIFY_API_KEY);
     const res = await remote(
       `https://api.geoapify.com/v1/geocode/${endpoint}?${q}`,
     );
-    return reply({ locations: normalizeGeoapify(res) });
+    return reply({ locations: normalizeGeoapify(res).filter(l => !search.country || l.countryCode === search.country) });
   }
   if (
     (path === "/api/analysis/day" || path === "/api/analysis/live") &&
