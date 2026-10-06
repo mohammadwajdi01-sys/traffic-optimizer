@@ -7,7 +7,14 @@ writeFileSync(
     `import { WorkerEntrypoint } from 'cloudflare:workers';
     export class TestProvider extends WorkerEntrypoint {
       async fetch(request) {
-        try { return Response.json(await remote('https://upstream.test'+new URL(request.url).pathname, {headers:{Authorization:'Bearer private-test-value'}})); }
+        try {
+          if (new URL(request.url).pathname === '/forecast') {
+            const p = await request.json();
+            const forecast = await createForecast(this.env, p, false);
+            return Response.json(await forecast('2026-10-07T05:30:00.000Z'));
+          }
+          return Response.json(await remote('https://upstream.test'+new URL(request.url).pathname, {headers:{Authorization:'Bearer private-test-value'}}));
+        }
         catch(e) { return Response.json({error:e.message}, {status:e.status ?? 500}); }
       }
     }
@@ -27,14 +34,19 @@ const mf = new Miniflare(
         durableObjects: {
           BUDGET: { className: "TestBudgetLedger", useSQLite: true },
         },
-        bindings: { APP_MODE: "setup", PUBLIC_BETA: "false" },
+        bindings: { APP_MODE: "setup", PUBLIC_BETA: "false", MAPBOX_SERVER_TOKEN: "private-test-value" },
         serviceBindings: {
           ASSETS: () => new Response("static"),
           PROVIDER_CHECK: { name: "traffic", entrypoint: "TestProvider" },
         },
         outboundService: (request) => {
+          if (new URL(request.url).hostname === "api.mapbox.com") {
+            assert.equal(new URL(request.url).searchParams.get("depart_at"), "2026-10-07T05:30:00Z");
+            return Response.json({routes:[{duration:1200,distance:15000,legs:[]}]});
+          }
           upstreamRequests.push(request.url);
           assert.equal(new URL(request.url).hostname, "upstream.test");
+          if (new URL(request.url).pathname === "/unauthorized") return new Response(null, {status:401});
           return new URL(request.url).pathname === "/redirect"
             ? new Response(null, {
                 status: 302,
@@ -60,10 +72,19 @@ try {
     "https://check/redirect",
   );
   assert.equal(redirected.status, 502);
+  const denied = await bindings.PROVIDER_CHECK.fetch("https://check/unauthorized");
+  assert.equal(denied.status, 503);
+  assert.match((await denied.json()).error, /HTTP 401/);
   assert.deepEqual(upstreamRequests, [
     "https://upstream.test/ok",
     "https://upstream.test/redirect",
+    "https://upstream.test/unauthorized",
   ]);
+  const forecast = await bindings.PROVIDER_CHECK.fetch("https://check/forecast", {
+    method: "POST", body: JSON.stringify({origin:{latitude:31.95,longitude:35.91,countryCode:"JO"},destination:{latitude:32,longitude:35.83}}),
+  });
+  assert.equal(forecast.status, 200);
+  assert.equal((await forecast.json()).durationSeconds, 1200);
   const ns = await mf.getDurableObjectNamespace("BUDGET", "traffic"),
     stub = ns.get(ns.idFromName("test"));
   async function call(path, body = {}) {

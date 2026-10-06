@@ -8,8 +8,8 @@ export async function remote(url: string, init?: RequestInit): Promise<any> {
   });
   if (!r.ok)
     throw new ApiError(
-      502,
-      "The location or traffic provider could not complete this request.",
+      [401, 403].includes(r.status) ? 503 : r.status === 429 ? 429 : 502,
+      `The location or traffic provider could not complete this request (HTTP ${r.status}).`,
     );
   return r.json();
 }
@@ -69,7 +69,8 @@ async function mapbox(env: Env, p: Plan, departureAt: string) {
   const coords = `${p.origin.longitude},${p.origin.latitude};${p.destination.longitude},${p.destination.latitude}`;
   const q = new URLSearchParams({
     access_token: env.MAPBOX_SERVER_TOKEN,
-    depart_at: departureAt,
+    // Mapbox accepts whole seconds, unlike JavaScript ISO strings with milliseconds.
+    depart_at: new Date(departureAt).toISOString().replace(/\.\d{3}Z$/, "Z"),
     geometries: "geojson",
     overview: "full",
     annotations: "congestion",

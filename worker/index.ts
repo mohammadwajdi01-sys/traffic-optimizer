@@ -173,8 +173,18 @@ async function api(request: Request, env: Env) {
       return reply({
         candidate: await forecast(new Date(Date.now() + 60000).toISOString()),
       });
-    const result = await optimize(p, forecast, { maxCalls: 24 });
-    return reply(result);
+    let providerError: unknown;
+    const checkedForecast = async (time: string) => {
+      try { return await forecast(time); }
+      catch (error) { providerError ??= error; throw error; }
+    };
+    try {
+      return reply(await optimize(p, checkedForecast, { maxCalls: 24 }));
+    } catch (error) {
+      // Preserve actionable provider failures when no samples succeeded.
+      if (providerError instanceof ApiError) throw providerError;
+      throw new ApiError(502, "No route forecasts are available. Check provider setup, coverage, or usage limits.");
+    }
   }
   if (path.startsWith("/api/analysis/"))
     throw new ApiError(410, "Forecasts are not stored. Run a fresh analysis.");
