@@ -101,3 +101,37 @@ test("owner controls cannot be accessed by an unsigned visitor and privacy is av
     page.getByRole("heading", { name: "Privacy policy" }),
   ).toBeVisible();
 });
+
+test("guest verification exposes the failure code, preserves route text, and stays within a phone screen", async ({page}) => {
+  await page.route("**/api/config",route=>route.fulfill({json:{mode:"live",authConfigured:false,searchConfigured:true,trafficConfigured:true,mapConfigured:false,publicBeta:true,turnstileSiteKey:"test-site-key",detectedCountry:"JO"}}));
+  await page.route("**/api/guest-session",route=>route.fulfill({json:{verified:false}}));
+  // Synthetic SDK only in this test; never a production Turnstile key or challenge bypass.
+  await page.route("https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit",route=>route.fulfill({contentType:"application/javascript",body:`window.turnstile={ready:cb=>cb(),render:(root,options)=>{window.testVerification=options;root.textContent='Human check test fixture';return 'test-widget';},remove:()=>{}};`}));
+  await page.goto("/plan");
+  const verification=page.locator(".guest-verification");
+  await expect(verification).toContainText("Human check test fixture");
+  await page.getByRole("combobox",{name:"From",exact:true}).fill("My route stays here");
+  await page.evaluate(()=> (window as any).testVerification["error-callback"]("200500"));
+  await expect(verification).toContainText("Verification code: 200500");
+  await expect(page.getByRole("button",{name:"Share location for nearby results"})).toBeDisabled();
+  await verification.getByRole("button",{name:"Refresh verification"}).click();
+  await expect(verification).not.toContainText("200500");
+  await expect(page.getByRole("combobox",{name:"From",exact:true})).toHaveValue("My route stays here");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+
+test("an existing verified guest is restored without loading a challenge and access expiry returns the check", async ({page})=>{
+  let verified=true;
+  await page.route("**/api/config",route=>route.fulfill({json:{mode:"live",authConfigured:false,searchConfigured:true,trafficConfigured:true,mapConfigured:false,publicBeta:true,turnstileSiteKey:"test-site-key",detectedCountry:"JO"}}));
+  await page.route("**/api/guest-session",route=>route.fulfill({json:verified?{verified:true,expiresAt:Date.now()+3600000}:{verified:false}}));
+  let widgetLoads=0;
+  await page.route("https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit",route=>{widgetLoads++;return route.fulfill({contentType:"application/javascript",body:`window.turnstile={ready:cb=>cb(),render:(root)=>{root.textContent='Human check test fixture';return 'test-widget';},remove:()=>{}};`});});
+  await page.goto("/plan");
+  await expect(page.getByRole("button",{name:"Share location for nearby results"})).toBeEnabled();
+  expect(widgetLoads).toBe(0);
+  verified=false;
+  await page.evaluate(()=>window.dispatchEvent(new Event("traffic-guest-expired")));
+  await expect(page.locator(".guest-verification")).toContainText("Human check test fixture");
+  await expect(page.getByRole("button",{name:"Share location for nearby results"})).toBeDisabled();
+  expect(widgetLoads).toBe(1);
+});

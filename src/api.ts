@@ -17,6 +17,7 @@ export async function api<T>(
   path: string,
   body?: unknown,
   method?: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   const { data } = supabase
     ? await supabase.auth.getSession()
@@ -30,8 +31,11 @@ export async function api<T>(
     method: method ?? (body === undefined ? "GET" : "POST"),
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
   });
   const json = (await res.json()) as any;
+  if (res.status === 401 && !data.session && typeof window !== "undefined")
+    window.dispatchEvent(new Event("traffic-guest-expired"));
   if (!res.ok)
     throw new ApiFailure(res.status, json.error ?? "Request failed.");
   return json;

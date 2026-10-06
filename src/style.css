@@ -1780,3 +1780,15 @@ input[type="range"] {
 .search-region select { width: 100%; min-height: 44px; padding: 9px; border: 1px solid #d3d9e1; border-radius: 10px; font: inherit; background: #fff; color: #172b4d; }
 .search-region .button { width: 100%; min-height: 44px; }
 .search-region .text-button { min-height: 44px; font: inherit; }
+
+.guest-verification {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #f7faff;
+}
+.guest-verification .turnstile-box {
+  min-width: 0;
+  width: 100%;
+}

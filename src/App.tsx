@@ -130,6 +130,7 @@ export default function App() {
       measurement_opt_in: false,
     }),
     [guestReady, setGuestReady] = useState(false),
+    [guestExpiresAt, setGuestExpiresAt] = useState<number | null>(null),
     [push, setPush] = useState(false),
     [tripStart, setTripStart] = useState<string | null>(null);
   const configQuery = useQuery({
@@ -143,6 +144,16 @@ export default function App() {
   });
   const mode = form.watch("mode");
   const requestVersion = useRef(0);
+  useEffect(() => {
+    const expire = () => {setGuestReady(false); setGuestExpiresAt(null);};
+    window.addEventListener("traffic-guest-expired", expire);
+    return () => window.removeEventListener("traffic-guest-expired", expire);
+  }, []);
+  useEffect(() => {
+    if (!guestExpiresAt) return;
+    const timer = setTimeout(() => setGuestReady(false), Math.max(0, guestExpiresAt - Date.now()));
+    return () => clearTimeout(timer);
+  }, [guestExpiresAt]);
   useEffect(() => {
     const subscription = form.watch(() => {
       requestVersion.current++;
@@ -669,6 +680,13 @@ export default function App() {
         </div>
         <SlidersHorizontal size={20} />
       </div>
+      {config.publicBeta && !user && !demo && config.turnstileSiteKey && !guestReady && (
+        <GuestAccess
+          siteKey={config.turnstileSiteKey}
+          onReady={(expiresAt) => {setGuestExpiresAt(expiresAt); setGuestReady(true); setError("");}}
+          onError={setError}
+        />
+      )}
       {!demo && <SearchRegion detectedCountry={config.detectedCountry} searchEnabled={config.searchConfigured && Boolean(user || guestReady)} />}
       <div className="locations">
         <LocationField
@@ -764,17 +782,6 @@ export default function App() {
         {busy ? t.finding : t.find}
       </button>
       <p className="micro-copy">{demo ? t.demoAttribution : t.chooseDate}</p>
-      {config.publicBeta &&
-        !user &&
-        !demo &&
-        config.turnstileSiteKey &&
-        !guestReady && (
-          <GuestAccess
-            siteKey={config.turnstileSiteKey}
-            onReady={() => setGuestReady(true)}
-            onError={setError}
-          />
-        )}
     </form>
   );
 
