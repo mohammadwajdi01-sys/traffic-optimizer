@@ -12,11 +12,20 @@ import {
 } from "../shared/optimizer";
 import { localInstant, addDays } from "../shared/time";
 import { defaultPlan, demoForecast } from "../shared/demo";
-import { normalizeGoogle, normalizeMapbox } from "../worker/providers";
+import { normalizeGeoapify, normalizeGoogle, normalizeMapbox } from "../worker/providers";
 import { planSchema } from "../shared/schema";
 import type { Candidate, Plan } from "../shared/types";
 const p: Plan = { ...defaultPlan(), date: "2026-10-06", time: "09:00" };
 const now = localInstant(p.date, "04:00", p.timezone);
+it("allows provider search results with long opaque place IDs to be planned", () => {
+  const [origin] = normalizeGeoapify({features: [{properties: {
+    place_id: "a".repeat(2048), formatted: "Public Amman landmark",
+    lat: 31.95, lon: 35.91, country_code: "jo", timezone: {name: "Asia/Amman"},
+  }}]});
+  expect(planSchema.safeParse({...p, origin}).success).toBe(true);
+  expect(origin).toMatchObject({latitude: 31.95, longitude: 35.91, countryCode: "JO", source: "geoapify"});
+  expect(origin.id).toBeUndefined();
+});
 function candidate(
   time: string,
   minutes: number,

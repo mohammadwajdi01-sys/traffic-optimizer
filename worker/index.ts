@@ -4,7 +4,7 @@ import { optimize } from "../shared/optimizer";
 import { liveWindow } from "../shared/planning";
 import { ApiError, budget, type Env } from "./env";
 import { db, identity } from "./database";
-import { createForecast, remote } from "./providers";
+import { createForecast, normalizeGeoapify, remote } from "./providers";
 import { scheduledReminders } from "./notifications";
 import { createGuestSession } from "./guest";
 export { BudgetLedger } from "./budget";
@@ -146,18 +146,7 @@ async function api(request: Request, env: Env) {
     const res = await remote(
       `https://api.geoapify.com/v1/geocode/${endpoint}?${q}`,
     );
-    return reply({
-      locations:
-        res.features?.map((f: any) => ({
-          id: f.properties.place_id,
-          displayName: f.properties.formatted,
-          latitude: f.properties.lat,
-          longitude: f.properties.lon,
-          countryCode: f.properties.country_code?.toUpperCase(),
-          timezone: f.properties.timezone?.name,
-          source: "geoapify",
-        })) ?? [],
-    });
+    return reply({ locations: normalizeGeoapify(res) });
   }
   if (
     (path === "/api/analysis/day" || path === "/api/analysis/live") &&

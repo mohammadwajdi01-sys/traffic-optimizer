@@ -1,4 +1,4 @@
-import type { Candidate, Plan } from "../shared/types";
+import type { Candidate, Location, Plan } from "../shared/types";
 import { ApiError, budget, type Env } from "./env";
 export async function remote(url: string, init?: RequestInit): Promise<any> {
   const r = await fetch(url, {
@@ -12,6 +12,17 @@ export async function remote(url: string, init?: RequestInit): Promise<any> {
       "The location or traffic provider could not complete this request.",
     );
   return r.json();
+}
+export function normalizeGeoapify(res: any): Location[] {
+  return res.features?.map((f: any) => ({
+    // Routing uses coordinates; unused opaque provider IDs can exceed our ID limit.
+    displayName: f.properties.formatted,
+    latitude: f.properties.lat,
+    longitude: f.properties.lon,
+    countryCode: f.properties.country_code?.toUpperCase(),
+    timezone: f.properties.timezone?.name,
+    source: "geoapify",
+  })) ?? [];
 }
 export function normalizeMapbox(route: any, departureAt: string): Candidate {
   if (!route || typeof route.duration !== "number" || route.duration <= 0)
