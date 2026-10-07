@@ -14,7 +14,7 @@ test("core goals, keyboard chart choices and overnight fields stay in Plan",asyn
   await page.getByText("Checked departures table",{exact:true}).first().click();
   await expect(page.locator(".timeline-table tr[aria-selected=true]")).toHaveCount(1);
   if(testInfo.project.name!=="desktop") {
-    const readableLabel=await page.locator(".forecast-timeline svg text").first().evaluate(el=>parseFloat(getComputedStyle(el).fontSize)*el.ownerSVGElement!.getBoundingClientRect().width/680);
+    const readableLabel=await page.locator(".forecast-timeline svg text").first().evaluate(el=>parseFloat(getComputedStyle(el).fontSize)*el.closest("svg")!.getBoundingClientRect().width/680);
     expect(readableLabel).toBeGreaterThanOrEqual(12);
   }
   await page.locator(".result-panel").screenshot({path:testInfo.outputPath("core-results-en.png")});
