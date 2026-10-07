@@ -14,7 +14,10 @@ import App from "../src/App";
 import {MapPreview} from "../src/MapPreview";
 import GuestAccess from "../src/GuestAccess";
 import SignInDialog from "../src/SignInDialog";
-import { configureAuth } from "../src/api";
+import {preparePrivateAccount} from "../src/private-session";
+import { displayFailure } from "../src/feedback";
+import { en, ar } from "../src/i18n";
+import { ApiFailure, configureAuth } from "../src/api";
 import {LocationField} from "../src/LocationField";
 import {SearchRegion} from "../src/SearchRegion";
 import {freshSearchPosition,useSearchLocation} from "../src/search-location";
@@ -24,6 +27,7 @@ import { demoForecast } from "../shared/demo";
 import { defaultPlan } from "../shared/demo";
 const auth = vi.hoisted(() => ({
   getSession: vi.fn(async () => ({ data: { session: null } })),
+  signOut: vi.fn(async () => ({error:null})),
   signInWithOAuth: vi.fn(async (): Promise<{error: Error | null}> => ({ error: null })),
   signInWithOtp: vi.fn(async (): Promise<{error: Error | null}> => ({ error: null })),
   onAuthStateChange: vi.fn((_callback: any) => ({
@@ -43,6 +47,7 @@ vi.mock("mapbox-gl",()=>({default:{
 beforeEach(() => {
   auth.getSession.mockReset().mockResolvedValue({data:{session:null}});
   auth.onAuthStateChange.mockReset().mockImplementation((_callback:any)=>({data:{subscription:{unsubscribe:vi.fn()}}}));
+  auth.signOut.mockReset().mockResolvedValue({error:null});
   auth.signInWithOAuth.mockReset().mockResolvedValue({error: null});
   auth.signInWithOtp.mockReset().mockResolvedValue({error: null});
   localStorage.clear();
@@ -247,16 +252,16 @@ describe("Sign-in recovery after a failed human check", () => {
     dialog();
     await userEvent.setup().click(screen.getByRole("button",{name:"Continue with Google"}));
     const modal=screen.getByRole("dialog");
-    expect((await within(modal).findByRole("alert")).textContent).toContain("Google sign-in request failed");
+    expect((await within(modal).findByRole("alert")).textContent).toContain("Sign-in could not finish");
     await userEvent.setup().click(within(modal).getByRole("button",{name:"Continue with Google"}));
     await waitFor(()=>expect(within(modal).queryByRole("alert")).toBeNull());
     expect(auth.signInWithOAuth).toHaveBeenCalledTimes(2);
   });
   it("reports email failure within the dialog without claiming the link was sent", async () => {
-    auth.signInWithOtp.mockResolvedValueOnce({error:new Error("Email request rate limit reached")});
+    auth.signInWithOtp.mockResolvedValueOnce({error:Object.assign(new Error("Email request rate limit reached"),{status:429})});
     dialog();
     await userEvent.setup().click(screen.getByRole("button",{name:"Email a sign-in link"}));
-    expect((await within(screen.getByRole("dialog")).findByRole("alert")).textContent).toContain("rate limit");
+    expect((await within(screen.getByRole("dialog")).findByRole("alert")).textContent).toContain("usage limit");
     expect(screen.queryByText(/Sign-in link requested/)).toBeNull();
   });
   it("prevents duplicate requests and explains that a requested email link is not sign-in", async () => {
@@ -725,5 +730,44 @@ describe("Today and Plan purposes",()=>{
     await u.click(screen.getByRole("button",{name:"Plan a time window"}));
     expect(screen.getByLabelText("Earliest arrival")).toBeTruthy();
     expect(screen.getByRole("combobox",{name:"Use a saved route"})).toBeTruthy();
+  });
+});
+
+
+describe("Private account boundary and local logout", () => {
+  it("clears only the previous account token before a fresh unlock and retains a pending PKCE verifier",()=>{
+    const config={mode:"live" as const,authConfigured:true,searchConfigured:false,trafficConfigured:false,mapConfigured:false,publicBeta:false,privateAccess:true,privateSessionId:"new-gate",supabaseUrl:"https://example.supabase.co"};
+    localStorage.setItem("traffic.authGateSession","old-gate");localStorage.setItem("sb-example-auth-token","old-personal-session");localStorage.setItem("sb-example-auth-token-user","old-user");localStorage.setItem("sb-example-auth-token-code-verifier","pending-callback");localStorage.setItem("traffic.locale","ar");
+    preparePrivateAccount(config);
+    expect(localStorage.getItem("sb-example-auth-token")).toBeNull();expect(localStorage.getItem("sb-example-auth-token-user")).toBeNull();expect(localStorage.getItem("sb-example-auth-token-code-verifier")).toBe("pending-callback");expect(localStorage.getItem("traffic.locale")).toBe("ar");
+    localStorage.setItem("sb-example-auth-token","new-personal-session");preparePrivateAccount(config);expect(localStorage.getItem("sb-example-auth-token")).toBe("new-personal-session");
+  });
+  it("fails closed when a private account boundary is unavailable",()=>{
+    expect(()=>preparePrivateAccount({mode:"live",authConfigured:true,searchConfigured:false,trafficConfigured:false,mapConfigured:false,publicBeta:false,privateAccess:true,supabaseUrl:"https://example.supabase.co"})).toThrow();
+  });
+  it("keeps Settings out of primary navigation and exposes it from the profile",async()=>{
+    mount();const primary=document.querySelector<HTMLElement>(".bottom-nav")!;expect(within(primary).getAllByRole("link")).toHaveLength(4);expect(within(primary).queryByRole("link",{name:"Settings"})).toBeNull();
+    await userEvent.setup().click(screen.getByLabelText("Account menu"));await userEvent.setup().click(screen.getByRole("link",{name:"Settings"}));expect(screen.getByRole("heading",{name:"Settings"})).toBeTruthy();
+  });
+  it("signs out only this personal session and clears displayed route details",async()=>{
+    history.replaceState(null,"","/settings");auth.getSession.mockResolvedValue({data:{session:{user:{email:"local-session@example.test"},access_token:"unit-only"}}} as any);
+    vi.stubGlobal("fetch",vi.fn(async(path:string)=>({ok:true,json:async()=>path==="/api/config"?{mode:"live",authConfigured:true,supabaseUrl:"https://example.supabase.co",supabaseKey:"unit-only",searchConfigured:false,trafficConfigured:false,mapConfigured:false,publicBeta:false}:path==="/api/me"?{role:"user"}:[]})));
+    mount();await userEvent.setup().click(await screen.findByRole("button",{name:"Sign out of personal account"}));expect(auth.signOut).toHaveBeenCalledWith({scope:"local"});await waitFor(()=>expect(screen.queryByRole("button",{name:"Sign out of personal account"})).toBeNull());expect(useStore.getState().analysis).toBeNull();
+  });
+});
+
+
+describe("Localized API recovery",()=>{
+  it("distinguishes verification, permission and daily allowances without exposing provider details",()=>{
+    expect(displayFailure(new ApiFailure(403,"internal detail","VERIFICATION_REQUIRED"),"en")).toBe(en.verificationFailed);
+    expect(displayFailure(new ApiFailure(403,"internal detail","PERMISSION_DENIED"),"ar")).toBe(ar.permissionDenied);
+    expect(displayFailure(new ApiFailure(429,"internal detail","DAILY_ALLOWANCE"),"en")).toBe(en.dailyAllowance);
+    expect(displayFailure(new ApiFailure(429,"internal detail","USAGE_LIMIT"),"ar")).toBe(ar.usageLimit);
+  });
+  it("uses localized recovery for invalid input, provider, network and unknown failures",()=>{
+    expect(displayFailure(new ApiFailure(400,"secret detail"),"ar")).toBe(ar.invalidInput);
+    expect(displayFailure(new ApiFailure(503,"secret detail"),"en")).toBe(en.providerFailure);
+    expect(displayFailure(new TypeError("fetch failed"),"ar")).toBe(ar.networkFailure);
+    expect(displayFailure(new Error("secret detail"),"en")).toBe(en.error);
   });
 });

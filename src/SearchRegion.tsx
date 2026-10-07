@@ -38,7 +38,7 @@ export function SearchRegion({detectedCountry, searchEnabled}:{detectedCountry?:
     <label>{t.searchCountry}<select value={context.countryCode ?? ""} onChange={e => {
       sequence.current++;setBusy(false);setError("");context.setContext({countryCode:countryCode(e.target.value),source:"manual"});
     }}><option value="" disabled>{t.chooseCountry}</option>{countries.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}</select></label>
-    <p className="micro-copy">{t.searchLocationHelp}</p>
+    <details className="search-options"><summary>{t.locationOptions}</summary><p className="micro-copy">{t.searchLocationHelp}</p></details>
     <button type="button" className="button secondary" disabled={busy || !searchEnabled} onClick={locate}>{busy ? t.locating : t.shareSearchLocation}</button>
     <p className="micro-copy" role="status">{freshSearchPosition(context) ? t.nearbySearch : context.source === "network" ? t.networkCountry : t.countryOnlySearch}</p>
     {context.position && <button type="button" className="text-button" onClick={() => {sequence.current++;setBusy(false);context.setContext({countryCode:context.countryCode,source:"manual"});}}>{t.clearSearchLocation}</button>}

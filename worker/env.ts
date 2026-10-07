@@ -5,6 +5,7 @@ export interface Env {
   PUBLIC_BETA?: string;
   PRIVATE_ACCESS_REQUIRED?: string;
   PRIVATE_ACCESS_CREDENTIALS?: string;
+  PRIVATE_GUEST_ACCESS_CREDENTIALS?: string;
   GOOGLE_ENABLED?: string;
   GOOGLE_AUTH_ENABLED?: string;
   SUPABASE_URL?: string;

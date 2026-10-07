@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
-import { X } from "lucide-react";
 import type { AppConfig } from "../shared/types";
 import { supabase } from "./api";
 import { en, ar } from "./i18n";
 import { useStore } from "./store";
+import {Button, FieldError, Modal, Notice, Pending} from "./feedback";
 
 export default function SignInDialog({
   config,
@@ -58,49 +57,26 @@ export default function SignInDialog({
       if (active.current && method === "email") setSent(true);
     } catch (e) {
       if (active.current)
-        setError(e instanceof Error ? e.message : t.authFailed);
+        setError(e && typeof e === "object" && "status" in e && e.status === 429 ? t.usageLimit : t.authFailed);
     } finally {
       pending.current = false;
       if (active.current) setBusy(false);
     }
   }
   return (
-    <Dialog.Root
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content" aria-busy={busy}>
-          <Dialog.Title>{t.signin}</Dialog.Title>
-          <Dialog.Description>
-            {config.authConfigured ? t.account : t.authSetup}
-          </Dialog.Description>
-          <Dialog.Close className="dialog-close" aria-label={t.close}>
-            <X size={20} />
-          </Dialog.Close>
-          {error && (
-            <p className="banner error" role="alert">
-              {error}
-            </p>
-          )}
-          {busy && <p role="status">{t.signingIn}</p>}
-          {sent && (
-            <p className="banner success" role="status">
-              {t.signinLinkRequested}
-            </p>
-          )}
+    <Modal title={t.signin} description={config.authConfigured ? t.account : t.authSetup} closeLabel={t.close} onClose={onClose} busy={busy}>
+          <FieldError id="signin-error">{error}</FieldError>
+          {busy && <Pending>{t.signingIn}</Pending>}
+          {sent && <Notice kind="success">{t.signinLinkRequested}</Notice>}
           {config.authConfigured && config.googleAuthEnabled && (
-            <button
+            <Button
               className="button primary full"
               type="button"
               disabled={busy}
               onClick={() => signIn("google")}
             >
               {t.signinGoogle}
-            </button>
+            </Button>
           )}
           {config.authConfigured && (
             <form
@@ -116,21 +92,21 @@ export default function SignInDialog({
                   autoComplete="email"
                   required
                   disabled={busy}
+                  aria-invalid={Boolean(error)}
+                  aria-describedby={error ? "signin-error" : undefined}
                   value={email}
                   onChange={(e) => onEmail(e.target.value)}
                 />
               </label>
-              <button
+              <Button
                 className="button primary full"
                 type="submit"
                 disabled={busy}
               >
                 {t.sendLink}
-              </button>
+              </Button>
             </form>
           )}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    </Modal>
   );
 }

@@ -8,7 +8,7 @@ import { createForecast, normalizeGeoapify, remote } from "./providers";
 import { scheduledReminders } from "./notifications";
 import { createGuestSession, verifyGuestSession } from "./guest";
 import { countryCode, locationQuery, locationSearchSchema } from "../shared/location-search";
-import { privateAccess, privateResponse } from "./private-access";
+import { privateAccess, privateResponse, privateSessionId } from "./private-access";
 export { BudgetLedger } from "./budget";
 const security = {
   "Cache-Control": "no-store",
@@ -70,6 +70,7 @@ async function api(request: Request, env: Env) {
       vapidPublicKey: env.VAPID_PUBLIC_KEY,
       publicBeta: env.PUBLIC_BETA === "true",
       privateAccess: env.PRIVATE_ACCESS_REQUIRED === "true",
+      privateSessionId: privateSessionId(request),
       detectedCountry: countryCode(request.cf?.country),
     });
   if (path === "/api/health" && request.method === "GET")
@@ -405,7 +406,8 @@ export default {
           () => {},
         ),
       );
-      return reply({ error: message, requestId }, status);
+      const code = status === 429 ? /daily analysis/i.test(message) ? "DAILY_ALLOWANCE" : "USAGE_LIMIT" : status === 403 ? /verif|human/i.test(message) ? "VERIFICATION_REQUIRED" : "PERMISSION_DENIED" : status === 401 ? "ACCOUNT_REQUIRED" : status >= 500 ? "SERVICE_UNAVAILABLE" : "INVALID_INPUT";
+      return reply({ error: message, requestId, code }, status);
     }
   },
   async scheduled(

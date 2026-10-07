@@ -1,17 +1,21 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { AppConfig } from "../shared/types";
+import { preparePrivateAccount } from "./private-session";
 export let supabase: SupabaseClient | null = null;
 export class ApiFailure extends Error {
   constructor(
     public status: number,
     message: string,
+    public code?: string,
   ) {
     super(message);
   }
 }
 export function configureAuth(c: AppConfig) {
-  if (c.supabaseUrl && c.supabaseKey && !supabase)
+  if (c.supabaseUrl && c.supabaseKey && !supabase) {
+    preparePrivateAccount(c);
     supabase = createClient(c.supabaseUrl, c.supabaseKey);
+  }
 }
 export async function api<T>(
   path: string,
@@ -41,7 +45,7 @@ export async function api<T>(
   if (res.status === 401 && !data.session && typeof window !== "undefined")
     window.dispatchEvent(new Event("traffic-guest-expired"));
   if (!res.ok)
-    throw new ApiFailure(res.status, json.error ?? "Request failed.");
+    throw new ApiFailure(res.status, json.error ?? "Request failed.", json.code);
   return json;
 }
 export function navUrl(

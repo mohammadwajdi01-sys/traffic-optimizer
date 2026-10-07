@@ -81,6 +81,23 @@ export class BudgetLedger extends DurableObject<Env> {
         });
       }
       if (path === "/config") return reply(cfg);
+      // Internal Worker binding only; no browser route exposes this session store.
+      if (path.startsWith("/private-session/")) {
+        if (!/^[a-f0-9]{32}$/.test(data.id)) return reply({error:"Invalid session."}, 400);
+        const sessionKey = `gate:${data.id}`;
+        if (path === "/private-session/create") {
+          if (!Number.isSafeInteger(data.expires) || data.expires <= Date.now() || data.expires > Date.now() + 168 * 3600000 || !["owner", "guest"].includes(data.kind) || !/^[a-f0-9]{64}$/.test(data.epoch)) return reply({error:"Invalid session."}, 400);
+          await tx.put(sessionKey, {expires:data.expires, kind:data.kind, epoch:data.epoch});
+          return reply({ok:true});
+        }
+        if (path === "/private-session/delete") {await tx.delete(sessionKey); return reply({ok:true});}
+        if (path === "/private-session/read") {
+          const session = await tx.get<{expires:number; kind:string; epoch:string}>(sessionKey);
+          if (session && session.expires <= Date.now()) {await tx.delete(sessionKey); return reply({session:null});}
+          return reply({session:session ?? null});
+        }
+        return reply({error:"Not found"}, 404);
+      }
       if (path === "/error") {
         const errors = (await tx.get<any[]>("errors")) ?? [];
         errors.unshift({
@@ -204,6 +221,7 @@ export class BudgetLedger extends DurableObject<Env> {
         const all = await tx.list();
         const old: string[] = [];
         for (const [k, v] of all) {
+          if (k.startsWith("gate:") && (v as {expires:number}).expires <= Date.now()) old.push(k);
           if (k.startsWith("private:") && Number(k.split(":")[1]) < Math.floor(minute / 10)) old.push(k);
           if (
             (k.startsWith("r:") || k.startsWith("pr:")) &&

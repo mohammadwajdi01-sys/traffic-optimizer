@@ -68,6 +68,7 @@ export type SavedRoute = {
 };
 export type AppConfig = {
   privateAccess?: boolean;
+  privateSessionId?: string;
   detectedCountry?: string;
   mode: "setup" | "live";
   authConfigured: boolean;
