@@ -2,6 +2,7 @@ import type { Analysis, Candidate, Plan } from "./types";
 import { iso, localInstant } from "./time";
 import { isArrival, isWindowPlan, selectedWindow } from "./windows";
 import { optimizeWindow } from "./window-optimizer";
+import { recommendationAllowed } from "./forecast-reliability";
 export type Forecast = (departureAt: string) => Promise<Candidate>;
 export function windowFor(p: Plan, now = Date.now()): [number, number] {
   if (isWindowPlan(p)) {
@@ -97,8 +98,9 @@ export function summarize(
   const valid = samples.filter((c) => feasible(c, p));
   const byScore = [...valid].sort(
     (a, b) =>
-      score(a, p) - score(b, p) ||
-      Date.parse(b.departureAt) - Date.parse(a.departureAt),
+      (p.goal === "soonest" && isWindowPlan(p)
+        ? Date.parse(a.arrivalAt) - Date.parse(b.arrivalAt) || a.durationSeconds - b.durationSeconds || Date.parse(a.departureAt) - Date.parse(b.departureAt)
+        : score(a, p) - score(b, p) || Date.parse(b.departureAt) - Date.parse(a.departureAt)) || a.provider.localeCompare(b.provider),
   );
   const congestion =
     valid.length > 0 &&
@@ -108,12 +110,12 @@ export function summarize(
       ? Math.max(0, c.durationSeconds - c.staticDurationSeconds!)
       : c.durationSeconds;
   const low = [...valid].sort(
-    (a, b) => metric(a) - metric(b) || score(a, p) - score(b, p),
+    (a, b) => metric(a) - metric(b) || Date.parse(b.departureAt) - Date.parse(a.departureAt) || a.provider.localeCompare(b.provider),
   );
   const latest =
     isArrival(p)
       ? ([...valid].sort(
-          (a, b) => Date.parse(b.departureAt) - Date.parse(a.departureAt),
+          (a, b) => Date.parse(b.departureAt) - Date.parse(a.departureAt) || a.durationSeconds - b.durationSeconds || a.provider.localeCompare(b.provider),
         )[0] ?? null)
       : null;
   const compared = isWindowPlan(p) ? valid : samples;
@@ -145,10 +147,10 @@ export function summarize(
       });
   }
   return {
-    best: byScore[0] ?? null,
-    lowest: low[0] ?? null,
-    latest,
-    avoid,
+    best: recommendationAllowed(p) ? byScore[0] ?? null : null,
+    lowest: recommendationAllowed(p) ? low[0] ?? null : null,
+    latest: recommendationAllowed(p) ? latest : null,
+    avoid: recommendationAllowed(p) ? avoid : [],
     lowestMetric: congestion ? "congestion" : "duration",
   };
 }
@@ -249,7 +251,8 @@ export async function optimize(
     warnings.push(
       "Some forecasts were unavailable. Results cover the tested departures only.",
     );
-  if (!result.best)
+  if (!recommendationAllowed(p)) warnings.push("Forecast accuracy for this route is unvalidated after a reported discrepancy. Automatic traffic recommendations are paused.");
+  else if (!result.best)
     warnings.push(
       "No tested departure meets your arrival constraints. Increase the window or reduce the buffer.",
     );
@@ -262,7 +265,7 @@ export async function optimize(
     warnings.push(
       "A no-traffic baseline is unavailable. Minimum driving time is shown instead of a congestion claim.",
     );
-  if (samples.some((s) => s.trafficCoverage === "unknown"))
+  if (samples.some((s) => s.trafficCoverage !== "available"))
     warnings.push("Traffic coverage is unconfirmed for part of this journey.");
   return {
     id: crypto.randomUUID(),

@@ -1,15 +1,44 @@
 import { test, expect } from "@playwright/test";
+test("core goals, keyboard chart choices and overnight fields stay in Plan",async({page},testInfo)=>{
+  await page.goto("/");
+  await page.getByRole("button",{name:"Try an example",exact:true}).click();
+  await page.getByRole("button",{name:"Find best time",exact:true}).click();
+  await expect(page).toHaveURL(/\/plan$/);
+  await expect(page.getByRole("heading",{name:"Best times to leave",exact:true})).toBeVisible();
+  await page.getByRole("combobox",{name:"What matters most?"}).selectOption("soonest");
+  await expect(page.locator(".goal-reason")).toContainText("Earliest estimated arrival");
+  const points=page.locator(".chart-choice");
+  await points.last().focus();await page.keyboard.press("Enter");
+  await expect(points.last()).toHaveAttribute("aria-pressed","true");
+  await expect(page.locator(".goal-reason")).toHaveText("Selected departure");
+  await page.getByText("Checked departures table",{exact:true}).first().click();
+  await expect(page.locator(".timeline-table tr[aria-selected=true]")).toHaveCount(1);
+  await page.locator(".result-panel").screenshot({path:testInfo.outputPath("core-results-en.png")});
+  await page.getByRole("button",{name:"ع",exact:true}).click();
+  await expect(page.locator(".forecast-timeline")).toBeVisible();
+  await page.locator(".result-panel").screenshot({path:testInfo.outputPath("core-results-ar.png")});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.getByRole("button",{name:"EN",exact:true}).click();
+  await page.getByRole("button",{name:"Leave between",exact:true}).click();
+  await page.getByLabel("Earliest departure",{exact:true}).fill("23:00");
+  await page.getByLabel("Latest departure",{exact:true}).fill("01:00");
+  await page.getByRole("checkbox",{name:"Ends next day"}).check();
+  await page.getByRole("button",{name:"Find best time",exact:true}).click();
+  await expect(page.locator(".forecast-timeline")).toBeVisible();
+  await expect(page.getByRole("heading",{name:"Best times to leave",exact:true})).toBeVisible();
+  await page.locator(".planner-form").screenshot({path:testInfo.outputPath("core-overnight-en.png")});
+});
 test("country search defaults visibly and supports manual choice and Arabic on small screens", async ({page}) => {
   await page.route("**/api/config",route => route.fulfill({json:{mode:"setup",authConfigured:false,searchConfigured:false,trafficConfigured:false,mapConfigured:false,publicBeta:false,detectedCountry:"JO"}}));
   await page.goto("/plan");
   const country = page.getByRole("combobox",{name:"Search country"});
   await expect(country).toHaveValue("JO");
-  await expect(page.getByRole("button",{name:"Share location for nearby results"})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"Use current location"})).toBeDisabled();
   await country.selectOption("LY");
   await expect(country).toHaveValue("LY");
   await page.getByRole("button",{name:"ع",exact:true}).click();
   await expect(page.getByRole("combobox",{name:"بلد البحث"})).toHaveValue("LY");
-  await expect(page.getByRole("button",{name:"مشاركة الموقع لعرض الأماكن القريبة"})).toBeVisible();
+  await expect(page.getByRole("button",{name:"استخدم موقعي الحالي"})).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 test("plans an example, respects the deadline, saves a route and opens navigation", async ({
@@ -27,9 +56,9 @@ test("plans an example, respects the deadline, saves a route and opens navigatio
   await expect(
     page.getByRole("heading", { name: "Best times to leave", exact: true }),
   ).toBeVisible();
-  await expect(page.locator(".result-card.best")).toContainText("Recommended");
+  await expect(page.locator(".goal-reason")).toContainText("Recommended");
   const link = page
-    .locator(".result-card.best")
+    .locator(".result-panel .selected-journey")
     .getByRole("link", { name: "Google Maps" });
   expect(await link.getAttribute("href")).toContain(
     "google.com/maps/dir/?api=1",
@@ -113,7 +142,7 @@ test("guest verification exposes the failure code, preserves route text, and sta
   await page.getByRole("combobox",{name:"From",exact:true}).fill("My route stays here");
   await page.evaluate(()=> (window as any).testVerification["error-callback"]("200500"));
   await expect(verification).toContainText("Verification code: 200500");
-  await expect(page.getByRole("button",{name:"Share location for nearby results"})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"Use current location"})).toBeDisabled();
   await verification.getByRole("button",{name:"Refresh verification"}).click();
   await expect(verification).not.toContainText("200500");
   await expect(page.getByRole("combobox",{name:"From",exact:true})).toHaveValue("My route stays here");
@@ -136,7 +165,7 @@ test("failed guest verification provides a visible account sign-in path without 
   await page.keyboard.press("Escape");
   await expect(verification.getByRole("button",{name:"Sign in",exact:true})).toBeFocused();
   await expect(page.getByRole("button",{name:"Find best time"})).toBeDisabled();
-  await expect(page.getByRole("button",{name:"Share location for nearby results"})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"Use current location"})).toBeDisabled();
   await expect(page.getByRole("combobox",{name:"From",exact:true})).toHaveValue("Route preserved after sign-in");
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
@@ -148,12 +177,12 @@ test("an existing verified guest is restored without loading a challenge and acc
   let widgetLoads=0;
   await page.route("https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit",route=>{widgetLoads++;return route.fulfill({contentType:"application/javascript",body:`window.turnstile={ready:()=>{throw new Error("async script cannot use ready()");},render:(root)=>{root.textContent='Human check test fixture';return 'test-widget';},remove:()=>{}};`});});
   await page.goto("/plan");
-  await expect(page.getByRole("button",{name:"Share location for nearby results"})).toBeEnabled();
+  await expect(page.getByRole("button",{name:"Use current location"})).toBeEnabled();
   expect(widgetLoads).toBe(0);
   verified=false;
   await page.evaluate(()=>window.dispatchEvent(new Event("traffic-guest-expired")));
   await expect(page.locator(".guest-verification")).toContainText("Human check test fixture");
-  await expect(page.getByRole("button",{name:"Share location for nearby results"})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"Use current location"})).toBeDisabled();
   expect(widgetLoads).toBe(1);
 });
 
@@ -168,6 +197,7 @@ test("reuses a saved route, checks Leave now and selects a listed departure on s
   const card=page.locator("article.saved-route").filter({hasText:"Fast commute"});
   await card.getByRole("button",{name:"Compare departures",exact:true}).click();
   await expect(page.getByRole("heading",{name:"Best times to leave",exact:true})).toBeVisible();
+  await page.getByText("Checked departures table",{exact:true}).first().click();
   const choices=page.getByRole("combobox",{name:"Choose a checked departure"});
   const value=await choices.locator("option:not([disabled])").first().getAttribute("value");
   await choices.selectOption(value!);

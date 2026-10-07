@@ -12,13 +12,13 @@ export function LocationField({
   value,
   onChange,
   searchEnabled,
-  gps = false,
+  gps = false, gpsButton = true,
 }: {
   label: string;
   value: Location | null;
   onChange: (v: Location | null) => void;
   searchEnabled: boolean;
-  gps?: boolean;
+  gps?: boolean; gpsButton?:boolean;
 }) {
   const { locale, demo } = useStore(),
     t = locale === "ar" ? ar : en,
@@ -29,6 +29,7 @@ export function LocationField({
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [manual, setManual] = useState(false),
+    [invalidFields,setInvalidFields]=useState<string[]>([]),
     [lat, setLat] = useState(""),
     [lng, setLng] = useState(""),
     [pair, setPair] = useState(""),
@@ -83,9 +84,9 @@ export function LocationField({
   async function locate() {
     setBusy(true);setError("");
     try {
-      const location = await browserLocation(locale, searchEnabled);
+      const {accuracyMeters,capturedAt,...location} = await browserLocation(locale, searchEnabled);
       onChange({...location, displayName:t.current});
-      if (location.countryCode) searchContext.setContext({countryCode:location.countryCode,position:{latitude:location.latitude,longitude:location.longitude,capturedAt:Date.now()},source:"gps"});
+      if (location.countryCode) searchContext.setContext({countryCode:location.countryCode,position:{latitude:location.latitude,longitude:location.longitude,capturedAt,accuracyMeters},source:"gps"});
     } catch { setError(t.gpsDenied); }
     finally { setBusy(false); }
   }
@@ -145,7 +146,7 @@ export function LocationField({
           }}
         />
       </div>
-      {gps && (
+      {gps && gpsButton && (
         <button
           type="button"
           className="icon-button"
@@ -194,7 +195,8 @@ export function LocationField({
                 setPair("");
                 setLat(value ? String(value.latitude) : "");
                 setLng(value ? String(value.longitude) : "");
-                setTz(value?.timezone || "Asia/Amman");
+                setTz(value?.timezone || ({JO:"Asia/Amman",LY:"Africa/Tripoli",SA:"Asia/Riyadh"}[searchContext.countryCode??""] ?? Intl.DateTimeFormat().resolvedOptions().timeZone));
+                setInvalidFields([]);
                 setError("");
                 setManual(true);
                 setOpen(false);
@@ -211,7 +213,7 @@ export function LocationField({
         <Modal title={t.manual} description={t.manualHelp} closeLabel={t.close} focusTarget={() => root.current?.querySelector<HTMLInputElement>('input[role="combobox"]') ?? null} onClose={() => {setManual(false);setError("");}}>
         <div className="coordinate-fields">
 
-          <label>{t.coordinatePair}<input type="text" dir="ltr" aria-invalid={Boolean(error)} aria-describedby={error ? `${gps ? "from" : "to"}-coordinate-error` : undefined} placeholder="31.9455631, 35.9271963" value={pair} onChange={e => {
+          <label>{t.coordinatePair}<input type="text" dir="ltr" aria-invalid={invalidFields.includes("pair")} aria-describedby={invalidFields.includes("pair") ? `${gps ? "from" : "to"}-coordinate-error` : undefined} placeholder="31.9455631, 35.9271963" value={pair} onChange={e => {
             setPair(e.target.value);
             const parts = normalizeDigits(e.target.value).trim().split(/[,;\s]+/).filter(Boolean);
             if (parts.length === 2) { setLat(parts[0]); setLng(parts[1]); setError(""); }
@@ -222,7 +224,7 @@ export function LocationField({
               type="text"
               inputMode="decimal"
               dir="ltr"
-              value={lat}
+              value={lat} aria-invalid={invalidFields.includes("latitude")} aria-describedby={invalidFields.includes("latitude")?`${gps?"from":"to"}-coordinate-error`:undefined}
               onChange={(e) => {setLat(e.target.value); setPair("");}}
             />
           </label>
@@ -232,24 +234,24 @@ export function LocationField({
               type="text"
               inputMode="decimal"
               dir="ltr"
-              value={lng}
+              value={lng} aria-invalid={invalidFields.includes("longitude")} aria-describedby={invalidFields.includes("longitude")?`${gps?"from":"to"}-coordinate-error`:undefined}
               onChange={(e) => {setLng(e.target.value); setPair("");}}
             />
           </label>
           <label>
             {t.timezone}
-            <input value={tz} onChange={(e) => setTz(e.target.value)} />
+            <input value={tz} aria-invalid={invalidFields.includes("timezone")} aria-describedby={invalidFields.includes("timezone")?`${gps?"from":"to"}-coordinate-error`:undefined} onChange={(e) => setTz(e.target.value)} />
           </label>
           <button
             type="button"
             onClick={() => {
-              if (pair.trim() && normalizeDigits(pair).trim().split(/[,;\s]+/).filter(Boolean).length !== 2) { setError(t.coordinateError); return; }
+              if (pair.trim() && normalizeDigits(pair).trim().split(/[,;\s]+/).filter(Boolean).length !== 2) {setInvalidFields(["pair"]); setError(t.coordinateError); return; }
               const a = coordinateNumber(lat), b = coordinateNumber(lng), timezone = tz.trim();
               if (!Number.isFinite(a) || !Number.isFinite(b) || Math.abs(a) > 90 || Math.abs(b) > 180) {
-                setError(t.coordinateError); return;
+                setInvalidFields([!Number.isFinite(a)||Math.abs(a)>90?"latitude":"",!Number.isFinite(b)||Math.abs(b)>180?"longitude":"",pair.trim()?"pair":""].filter(Boolean));setError(t.coordinateError); return;
               }
               try { new Intl.DateTimeFormat("en", {timeZone: timezone || "invalid"}); }
-              catch { setError(t.timezoneError); return; }
+              catch {setInvalidFields(["timezone"]); setError(t.timezoneError); return; }
               onChange({displayName: value && value.latitude === a && value.longitude === b ? value.displayName : `${a}, ${b}`, latitude: a, longitude: b, timezone, source: "manual"});
               setError(""); setManual(false); setOpen(false);
             }}

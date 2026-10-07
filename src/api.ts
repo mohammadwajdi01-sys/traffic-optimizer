@@ -23,9 +23,11 @@ export async function api<T>(
   method?: string,
   signal?: AbortSignal,
 ): Promise<T> {
+  signal?.throwIfAborted();
   const { data } = supabase
     ? await supabase.auth.getSession()
     : { data: { session: null } };
+  signal?.throwIfAborted();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };

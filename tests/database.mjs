@@ -58,6 +58,12 @@ assert.equal(
     .n,
   3,
 );
+assert.equal((await pg.query("select safety_buffer from user_preferences where user_id='"+b+"'")).rows[0].safety_buffer,10);
+await pg.exec(readFileSync("supabase/migrations/20261007190543_zero_new_account_buffer.sql","utf8"));
+assert.equal((await pg.query("select safety_buffer from user_preferences where user_id='"+b+"'")).rows[0].safety_buffer,10);
+const c="33333333-3333-4333-8333-333333333333";
+await pg.exec(`insert into auth.users(id) values('${c}')`);
+assert.equal((await pg.query("select safety_buffer from user_preferences where user_id='"+c+"'")).rows[0].safety_buffer,0);
 await pg.exec(`delete from auth.users where id='${a}'`);
 assert.equal(
   (await pg.query("select count(*)::int as n from notification_jobs")).rows[0]
