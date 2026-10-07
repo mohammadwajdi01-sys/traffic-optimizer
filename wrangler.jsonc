@@ -8,7 +8,7 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"],
+    "run_worker_first": true,
   },
   "durable_objects": {
     "bindings": [
@@ -30,6 +30,7 @@
   "vars": {
     "APP_MODE": "live",
     "PUBLIC_BETA": "true",
+    "PRIVATE_ACCESS_REQUIRED": "true",
     "GOOGLE_ENABLED": "false",
     "GOOGLE_AUTH_ENABLED": "true",
     "ADMIN_USER_IDS": "b63e6c45-eb60-47a1-8c1a-ab5d43c91d37",
@@ -40,10 +41,15 @@
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFObAaonWURNpgjK",
   },
   "env": {
+    "privatecheck": {
+      "vars": {"APP_MODE": "setup", "PUBLIC_BETA": "false", "PRIVATE_ACCESS_REQUIRED": "true", "GOOGLE_ENABLED": "false"},
+      "durable_objects": {"bindings": [{"name": "BUDGET", "class_name": "BudgetLedger"}]}
+    },
     "verification": {
       "vars": {
         "APP_MODE": "setup",
         "PUBLIC_BETA": "false",
+        "PRIVATE_ACCESS_REQUIRED": "false",
         "GOOGLE_ENABLED": "false",
       },
       "durable_objects": {

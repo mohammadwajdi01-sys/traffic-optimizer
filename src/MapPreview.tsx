@@ -71,21 +71,17 @@ export function MapPreview({
   }, [locale, ready]);
   useEffect(() => {
     const m = map.current;
-    if (!m || !origin || !destination) return;
+    if (!m) return;
     let markers: mapboxgl.Marker[] = [];
     let stopped = false;
     let onLoad: (() => void) | undefined;
     const draw = async () => {
       const lib = (await import("mapbox-gl")).default;
       if (stopped) return;
-      markers = [
-        new lib.Marker({ color: "#0866ff" })
-          .setLngLat([origin.longitude, origin.latitude])
-          .addTo(m),
-        new lib.Marker({ color: "#ef426b" })
-          .setLngLat([destination.longitude, destination.latitude])
-          .addTo(m),
-      ];
+      markers = [origin, destination].flatMap((point, index) => point ? [
+        new lib.Marker({ color: index === 0 ? "#0866ff" : "#ef426b" })
+          .setLngLat([point.longitude, point.latitude]).addTo(m),
+      ] : []);
       const update = () => {
         if (stopped) return;
         if (!m.isStyleLoaded()) return;
@@ -94,7 +90,7 @@ export function MapPreview({
         const data = {
           type: "Feature" as const,
           properties: {},
-          geometry: candidate?.geometry ?? {
+          geometry: (origin && destination ? candidate?.geometry : null) ?? {
             type: "LineString" as const,
             coordinates: [],
           },
@@ -110,6 +106,11 @@ export function MapPreview({
             layout: { "line-cap": "round", "line-join": "round" },
           });
         }
+        if (!origin || !destination) {
+          const point = origin ?? destination;
+          if (point) m.easeTo({center: [point.longitude, point.latitude], zoom: 14});
+          return;
+        }
         const b = new lib.LngLatBounds(
           [origin.longitude, origin.latitude],
           [destination.longitude, destination.latitude],
@@ -121,7 +122,7 @@ export function MapPreview({
       onLoad = update;
       update();
     };
-    draw();
+    draw().catch(() => {if (!stopped) setError(true);});
     return () => {
       stopped = true;
       if (onLoad) m.off("load", onLoad);

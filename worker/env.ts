@@ -3,6 +3,8 @@ export interface Env {
   BUDGET: DurableObjectNamespace;
   APP_MODE?: string;
   PUBLIC_BETA?: string;
+  PRIVATE_ACCESS_REQUIRED?: string;
+  PRIVATE_ACCESS_CREDENTIALS?: string;
   GOOGLE_ENABLED?: string;
   GOOGLE_AUTH_ENABLED?: string;
   SUPABASE_URL?: string;
