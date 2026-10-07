@@ -1792,3 +1792,5 @@ input[type="range"] {
   min-width: 0;
   width: 100%;
 }
+
+.verification-account { margin-block: 12px; }

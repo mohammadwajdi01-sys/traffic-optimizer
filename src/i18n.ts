@@ -133,6 +133,9 @@ export const en = {
   account: "Your account",
   signin: "Sign in",
   signinGoogle: "Continue with Google",
+  signingIn: "Contacting the sign-in service…",
+  authFailed: "Sign-in could not finish. Please try again.",
+  signinLinkRequested: "Sign-in link requested. Open the link in your email to finish signing in. You are not signed in yet.",
   signinForWeek:
     "Sign in to analyze a week. Guest access includes one daily analysis.",
   weekHorizon:
@@ -254,6 +257,7 @@ export const en = {
   verificationBrowser: "Cloudflare could not verify this browser. Signing in remains available. If this persists, report the code below.",
   verificationExpired: "The human check expired. Refresh verification to try again.",
   verificationCode: "Verification code",
+  verificationAccount: "You can also sign in to use address search, maps and live planning with your account.",
   retry: "Retry connection",
   serviceUnavailable: "Service unavailable",
   connectionFailed:
@@ -391,6 +395,9 @@ export const ar: typeof en = {
   account: "حسابك",
   signin: "تسجيل الدخول",
   signinGoogle: "المتابعة باستخدام Google",
+  signingIn: "جارٍ الاتصال بخدمة تسجيل الدخول…",
+  authFailed: "تعذّر إكمال تسجيل الدخول. حاول مرة أخرى.",
+  signinLinkRequested: "تم طلب رابط الدخول. افتح الرابط في بريدك الإلكتروني لإكمال تسجيل الدخول. لم يتم تسجيل دخولك بعد.",
   signinForWeek:
     "سجل الدخول لتحليل أسبوع. يتيح وصول الضيف تحليلاً واحداً يومياً.",
   weekHorizon:
@@ -504,6 +511,7 @@ export const ar: typeof en = {
   verificationBrowser: "لم تتمكن Cloudflare من التحقق من هذا المتصفح. يمكنك تسجيل الدخول. إذا استمرت المشكلة، أرسل الرمز أدناه.",
   verificationExpired: "انتهت صلاحية التحقق البشري. أعد تحميل التحقق للمحاولة مجدداً.",
   verificationCode: "رمز التحقق",
+  verificationAccount: "يمكنك أيضاً تسجيل الدخول لاستخدام البحث عن العناوين والخرائط وتخطيط الرحلات من حسابك.",
   retry: "إعادة محاولة الاتصال",
   serviceUnavailable: "الخدمة غير متاحة",
   connectionFailed:

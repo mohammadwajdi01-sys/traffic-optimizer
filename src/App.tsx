@@ -53,6 +53,7 @@ import { weeklyPlans } from "../shared/planning";
 import { isArrival, isWindowPlan, migratePlan, recurringPlan } from "../shared/windows";
 import { ForecastTimeline } from "./ForecastTimeline";
 import GuestAccess from "./GuestAccess";
+import SignInDialog from "./SignInDialog";
 import { LocationField } from "./LocationField";
 import { SearchRegion } from "./SearchRegion";
 import { MapPreview } from "./MapPreview";
@@ -144,6 +145,9 @@ export default function App() {
   });
   const mode = form.watch("mode");
   const requestVersion = useRef(0);
+  useEffect(() => {
+    if (user) setAuthOpen(false);
+  }, [user]);
   useEffect(() => {
     const expire = () => {setGuestReady(false); setGuestExpiresAt(null);};
     window.addEventListener("traffic-guest-expired", expire);
@@ -684,7 +688,8 @@ export default function App() {
         <GuestAccess
           siteKey={config.turnstileSiteKey}
           onReady={(expiresAt) => {setGuestExpiresAt(expiresAt); setGuestReady(true); setError("");}}
-          onError={setError}
+          onError={message => {if (!authOpen) setError(message);}}
+          onSignIn={config.authConfigured ? () => {setError(""); setAuthOpen(true);} : undefined}
         />
       )}
       {!demo && <SearchRegion detectedCountry={config.detectedCountry} searchEnabled={config.searchConfigured && Boolean(user || guestReady)} />}
@@ -921,7 +926,7 @@ export default function App() {
               {locale === "en" ? "ع" : "EN"}
             </button>
             <button
-              className="avatar"
+              className={user ? "avatar" : "button secondary small"}
               title={user ?? t.signin}
               aria-label={user ?? t.signin}
               onClick={() => (user ? go("settings") : setAuthOpen(true))}
@@ -929,9 +934,7 @@ export default function App() {
               {user ? (
                 user[0].toUpperCase()
               ) : (
-                <span>
-                  <Home size={18} />
-                </span>
+                <span>{t.signin}</span>
               )}
             </button>
           </div>
@@ -1622,73 +1625,7 @@ export default function App() {
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
-      <Dialog.Root open={authOpen} onOpenChange={setAuthOpen}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="dialog-overlay" />
-          <Dialog.Content className="dialog-content">
-            <Dialog.Title>{t.signin}</Dialog.Title>
-            <Dialog.Description>
-              {config.authConfigured ? t.account : t.authSetup}
-            </Dialog.Description>
-            <Dialog.Close className="dialog-close" aria-label={t.close}>
-              <X size={20} />
-            </Dialog.Close>
-            {config.authConfigured && config.googleAuthEnabled && (
-              <button
-                className="button primary full"
-                type="button"
-                onClick={async () => {
-                  try {
-                    const { error } = await supabase!.auth.signInWithOAuth({
-                      provider: "google",
-                      options: { redirectTo: location.origin + "/settings" },
-                    });
-                    if (error) throw error;
-                  } catch (err) {
-                    setError((err as Error).message);
-                  }
-                }}
-              >
-                {t.signinGoogle}
-              </button>
-            )}
-            {config.authConfigured && (
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  try {
-                    const { error } = await supabase!.auth.signInWithOtp({
-                      email,
-                      options: {
-                        emailRedirectTo: location.origin + "/settings",
-                        shouldCreateUser: config.publicBeta,
-                      },
-                    });
-                    if (error) throw error;
-                    setAuthOpen(false);
-                    setNotice(t.sentLink);
-                  } catch (err) {
-                    setError((err as Error).message);
-                  }
-                }}
-              >
-                <label>
-                  {t.email}
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                  />
-                </label>
-                <button className="button primary full" type="submit">
-                  {t.sendLink}
-                </button>
-              </form>
-            )}
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+      {authOpen && <SignInDialog config={config} email={email} onEmail={setEmail} onClose={() => setAuthOpen(false)} />}
     </div>
   );
 }
