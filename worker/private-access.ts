@@ -22,7 +22,7 @@ const headers = {
   "Cache-Control": "no-store, private",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
-  "Referrer-Policy": "no-referrer",
+  "Referrer-Policy": "same-origin",
   "Permissions-Policy": "geolocation=(self)",
   "Content-Security-Policy":
     "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",

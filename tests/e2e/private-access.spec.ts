@@ -22,9 +22,12 @@ test("private gate protects assets and deep links, unlocks and locks again", asy
   expect(api.status()).toBe(401);
   await page.getByLabel("Username / اسم المستخدم").fill("browser fixture");
   await page.getByLabel("Password / كلمة المرور").fill("wrong");
+  const wrongResponse = page.waitForResponse(response => response.url().endsWith("/private/unlock") && response.request().method() === "POST");
   await page
     .getByRole("button", { name: "Unlock website / فتح الموقع" })
     .click();
+  const rejected = await wrongResponse;
+  expect(rejected.status(), await rejected.text()).toBe(401);
   await expect(page.getByRole("alert")).toContainText(
     "Incorrect username or password",
   );
