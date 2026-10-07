@@ -40,7 +40,7 @@ export function MapPreview({
         // Register once globally; Arabic shaping is needed even in an English UI.
         if (lib.getRTLTextPluginStatus() === "unavailable") {
           lib.setRTLTextPlugin(
-            "https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-rtl-text/v0.3.0/mapbox-gl-rtl-text.js",
+            new URL("/mapbox-rtl-text-v0.2.3.js", window.location.origin).href,
             error => { if (error && !cancelled) setError(true); },
             true,
           );

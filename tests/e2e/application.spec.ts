@@ -178,3 +178,19 @@ test("reuses a saved route, checks Leave now and selects a listed departure on s
   await expect(page.getByRole("region",{name:"وقت الانطلاق المحدد"})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
+
+
+test("the shipped Arabic helper shapes and orders map text under the actual security policy",async({page})=>{
+  const response=await page.goto("/plan");
+  expect(response!.headers()["content-security-policy"]).not.toMatch(/wasm-unsafe-eval|\x27unsafe-eval\x27/);
+  const result=await page.evaluate(async()=>{
+    const url=new URL("/mapbox-rtl-text-v0.2.3.js",location.origin).href;
+    const code=`self.registerRTLTextPlugin=plugin=>{try{const shaped=plugin.applyArabicShaping('عمان');postMessage({shaped,visual:plugin.processBidirectionalText(shaped,[])});}catch(e){postMessage({error:String(e)});}};importScripts(${JSON.stringify(url)});`;
+    const blob=URL.createObjectURL(new Blob([code],{type:"application/javascript"}));
+    const worker=new Worker(blob);
+    try{return await new Promise<any>((resolve,reject)=>{worker.onmessage=e=>resolve(e.data);worker.onerror=e=>reject(new Error(e.message));});}
+    finally{worker.terminate();URL.revokeObjectURL(blob);}
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.shaped).toBe("ﻋﻤﺎﻥ");expect(result.visual).toEqual(["ﻥﺎﻤﻋ"]);
+});
