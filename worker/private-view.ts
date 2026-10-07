@@ -22,7 +22,7 @@ const copy = {
 export type GateMessage = Exclude<keyof typeof copy.en, "title" | "heading" | "intro" | "username" | "password" | "show" | "hide" | "remember" | "help" | "unlock" | "pending" | "account">;
 export const gateHeaders = {
   "Cache-Control": "no-store, private", "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
-  "Referrer-Policy": "no-referrer", "Permissions-Policy": "geolocation=(self)",
+  "Referrer-Policy": "same-origin", "Permissions-Policy": "geolocation=(self)",
   "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
 };
 export function safeGatePath(path: string): string {

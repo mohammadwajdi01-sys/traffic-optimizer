@@ -13,9 +13,9 @@ export function Notice({kind = "error", children, ...props}:{kind?:"error"|"succ
 export function Pending({children}:{children:ReactNode}) {return <p className="pending-status" role="status"><LoaderCircle size={18} className="spin" aria-hidden="true"/>{children}</p>;}
 export function Empty({children}:{children:ReactNode}) {return <p className="empty-hint">{children}</p>;}
 export function FieldError({id, children}:{id:string; children?:ReactNode}) {return children ? <p id={id} className="field-error" role="alert">{children}</p> : null;}
-export function Modal({title, description, closeLabel, onClose, children, busy = false}:{title:string;description:string;closeLabel:string;onClose:()=>void;children:ReactNode;busy?:boolean}) {
+export function Modal({title, description, closeLabel, onClose, children, busy = false, focusTarget}:{title:string;description:string;closeLabel:string;onClose:()=>void;children:ReactNode;busy?:boolean;focusTarget?:()=>HTMLElement|null}) {
   const returnFocus = useRef(document.activeElement);
-  return <Dialog.Root open onOpenChange={open => {if(!open)onClose();}}><Dialog.Portal><Dialog.Overlay className="dialog-overlay"/><Dialog.Content className="dialog-content" aria-busy={busy} onCloseAutoFocus={event => {event.preventDefault(); const target=returnFocus.current; if(target instanceof HTMLElement && target.isConnected) target.focus();}}><Dialog.Title>{title}</Dialog.Title><Dialog.Description>{description}</Dialog.Description><Dialog.Close className="dialog-close" aria-label={closeLabel}><X size={20}/></Dialog.Close>{children}</Dialog.Content></Dialog.Portal></Dialog.Root>;
+  return <Dialog.Root open onOpenChange={open => {if(!open)onClose();}}><Dialog.Portal><Dialog.Overlay className="dialog-overlay"/><Dialog.Content className="dialog-content" aria-busy={busy} onCloseAutoFocus={event => {event.preventDefault(); const target=focusTarget?.() ?? returnFocus.current; if(target instanceof HTMLElement && target.isConnected) target.focus();}}><Dialog.Title>{title}</Dialog.Title><Dialog.Description>{description}</Dialog.Description><Dialog.Close className="dialog-close" aria-label={closeLabel}><X size={20}/></Dialog.Close>{children}</Dialog.Content></Dialog.Portal></Dialog.Root>;
 }
 export function displayFailure(error: unknown, locale: "en" | "ar") {
   const t = locale === "ar" ? ar : en;

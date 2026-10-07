@@ -208,7 +208,7 @@ export function LocationField({
       )}
       {error && !manual && <FieldError id={`${gps ? "from" : "to"}-error`}>{error}</FieldError>}
       {manual && (
-        <Modal title={t.manual} description={t.manualHelp} closeLabel={t.close} onClose={() => {setManual(false);setError("");root.current?.querySelector<HTMLInputElement>('input[role="combobox"]')?.focus();}}>
+        <Modal title={t.manual} description={t.manualHelp} closeLabel={t.close} focusTarget={() => root.current?.querySelector<HTMLInputElement>('input[role="combobox"]') ?? null} onClose={() => {setManual(false);setError("");}}>
         <div className="coordinate-fields">
 
           <label>{t.coordinatePair}<input type="text" dir="ltr" aria-invalid={Boolean(error)} aria-describedby={error ? `${gps ? "from" : "to"}-coordinate-error` : undefined} placeholder="31.9455631, 35.9271963" value={pair} onChange={e => {
