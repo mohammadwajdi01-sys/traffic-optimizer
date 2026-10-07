@@ -39,6 +39,14 @@ describe("Journey goals and reliability", () => {
     expect(initialJourney(impossible)).toBeNull();
     expect(journeyOptions(impossible)).toEqual([]);
   });
+  it("reserves the arrival-window-start alternative for arrival modes",async()=>{
+    const arrival=await optimize(p,forecast(),{now});
+    expect(journeyOptions(arrival).some(row=>row.labels.includes('start'))).toBe(true);
+    const leaving=await optimize({...p,mode:'leave_between'},forecast(),{now});
+    const options=journeyOptions(leaving);
+    expect(options.some(row=>row.labels.includes('soonest'))).toBe(true);
+    expect(options.every(row=>!row.labels.includes('start'))).toBe(true);
+  });
   it("keeps Libya samples inspectable but withholds automatic recommendations even with annotations", async () => {
     const ly={...p,origin:{...p.origin,countryCode:"LY"}};
     const a=await optimize(ly,async at=>({...await forecast()(at),trafficCoverage:"available"}),{now});

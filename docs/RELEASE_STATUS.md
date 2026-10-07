@@ -1,4 +1,6 @@
-# Current implementation status — 7 October 2026
+# Current implementation status — 8 October 2026
+
+Core follow-up: arrival-window-start alternatives are limited to arrival modes. Map failures retain the canvas so a later load can recover, report a safe localized failure category instead of always claiming setup is missing, and retry only on request. Arabic label-loader failures no longer destroy the map. Hosted map/provider and Android acceptance still require fresh evidence; this is not a Libya ETA accuracy fix.
 
 Batch 2 implements inline Today/Plan results, one shared saved-route selector, explicit shortest-drive/soonest-arrival goals, overnight bounds, cancellable requests, selectable sampled charts and checked-departure tables. Existing saved buffers are preserved; a migration changes only the default for new account preferences to zero.
 

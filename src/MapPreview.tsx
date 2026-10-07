@@ -6,6 +6,7 @@ import type { Candidate, Location } from "../shared/types";
 import { api } from "./api";
 import { useStore } from "./store";
 import { en, ar } from "./i18n";
+import { mapFailure, type MapFailure } from "./map-failure";
 export function MapPreview({
   origin,
   destination,
@@ -25,24 +26,30 @@ export function MapPreview({
     t = locale === "ar" ? ar : en,
     container = useRef<HTMLDivElement>(null),
     map = useRef<mapboxgl.Map | null>(null),
-    [error, setError] = useState(false),
+    [error, setError] = useState<MapFailure | null>(null),
+    [labelsFailed, setLabelsFailed] = useState(false),
     [attempt,setAttempt]=useState(0),
     [ready, setReady] = useState(false);
   const google = googleContent || candidate?.provider === "google";
+  const mapAvailable = mapEnabled && !demo && !google;
+  const failureHelp = error ? {session:t.mapSessionHelp, access:t.mapAccessHelp, allowance:t.mapAllowanceHelp, setup:t.mapHelp, browser:t.mapBrowserHelp, network:t.mapNetworkHelp}[error] : null;
   useEffect(() => {
     if (!mapEnabled || demo || google || !container.current) return;
     let cancelled = false;
-    setError(false);
+    setError(null);
+    setLabelsFailed(false);
     api<{ token: string }>("/api/map-token")
       .then(async ({ token }) => {
         if (cancelled || !container.current) return;
         const lib = (await import("mapbox-gl")).default;
         if (cancelled) return;
         // Register once globally; Arabic shaping is needed even in an English UI.
-        if (lib.getRTLTextPluginStatus() === "unavailable") {
+        const rtlStatus = lib.getRTLTextPluginStatus();
+        if (rtlStatus === "error" && attempt === 0) setLabelsFailed(true);
+        if (rtlStatus === "unavailable" || (rtlStatus === "error" && attempt > 0)) {
           lib.setRTLTextPlugin(
             new URL("/mapbox-rtl-text-v0.2.3.js", window.location.origin).href,
-            error => { if (error && !cancelled) setError(true); },
+            error => { if (!cancelled) setLabelsFailed(Boolean(error)); },
             true,
           );
         }
@@ -56,10 +63,10 @@ export function MapPreview({
         });
         map.current = m;
         m.addControl(new lib.NavigationControl(), "top-right");
-        m.on("error", () => {if(!cancelled)setError(true);});
-        m.on("load", () => {if(!cancelled)setReady(true);});
+        m.on("error", event => {if(!cancelled)setError(mapFailure(event.error));});
+        m.on("load", () => {if(!cancelled){setError(null);setReady(true);}});
       })
-      .catch(() => {if(!cancelled)setError(true);});
+      .catch(error => {if(!cancelled)setError(mapFailure(error));});
     return () => {
       cancelled = true;
       map.current?.remove();
@@ -123,7 +130,7 @@ export function MapPreview({
       onLoad = update;
       update();
     };
-    draw().catch(() => {if (!stopped) setError(true);});
+    draw().catch(error => {if (!stopped) setError(mapFailure(error));});
     return () => {
       stopped = true;
       if (onLoad) m.off("load", onLoad);
@@ -132,22 +139,21 @@ export function MapPreview({
   }, [origin, destination, candidate, ready]);
   return (
     <section className="map-card" aria-label={t.preview}>
-      {mapEnabled && !demo && !google && !error ? (
-        <div ref={container} className="map-canvas" />
-      ) : (
-        <div className="map-placeholder">
+      {mapAvailable && <div ref={container} className="map-canvas" />}
+      {(!mapAvailable || (error && !ready)) && (
+        <div className={`map-placeholder${mapAvailable ? " map-recovery" : ""}`}>
           <div className="map-orbit">
             <Navigation size={38} />
           </div>
           <h3>{google ? t.mapPolicy : error ? t.mapError : t.mapSetup}</h3>
           <p>
-            {demo
+            {error ? failureHelp : demo
               ? t.demoAttribution
               : verificationPending
                 ? t.guestVerification
                 : t.mapHelp}
           </p>
-          {error && mapEnabled && !google && <button type="button" className="button secondary" onClick={()=>{setError(false);setReady(false);setAttempt(value=>value+1);}}>{t.mapRetry}</button>}
+          {error && mapAvailable && <button type="button" className="button secondary" onClick={()=>{setError(null);setReady(false);setAttempt(value=>value+1);}}>{t.mapRetry}</button>}
           <div className="journey-preview">
             <div>
               <MapPin size={18} />
@@ -161,6 +167,10 @@ export function MapPreview({
           </div>
         </div>
       )}
+      {mapAvailable && ((error && ready) || (labelsFailed && !error)) && <div className="map-warning" role="status">
+        <p>{error ? failureHelp : t.mapLabelsHelp}</p>
+        <button type="button" className="button secondary" onClick={()=>{setError(null);setReady(false);setAttempt(value=>value+1);}}>{t.mapRetry}</button>
+      </div>}
       <div className="map-top">
         <span>
           <Route size={16} />
