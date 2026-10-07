@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import "./style.css";
+import { en, ar } from "./i18n";
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { failed: boolean }
@@ -12,11 +13,12 @@ class ErrorBoundary extends React.Component<
     return { failed: true };
   }
   render() {
+    const t = localStorage.getItem("traffic.locale") === "ar" ? ar : en;
     return this.state.failed ? (
       <main className="fatal">
-        <h1>Traffic Optimizer</h1>
-        <p>Something went wrong. Reload to continue.</p>
-        <button onClick={() => location.reload()}>Reload</button>
+        <h1>{t.app}</h1>
+        <p>{t.error}</p>
+        <button className="button primary" onClick={() => location.reload()}>{t.reload}</button>
       </main>
     ) : (
       this.props.children

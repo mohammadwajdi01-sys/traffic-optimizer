@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import * as Dialog from "@radix-ui/react-dialog";
 import {
   ArrowDownUp,
   BarChart3,
@@ -59,6 +58,8 @@ import { SearchRegion } from "./SearchRegion";
 import { MapPreview } from "./MapPreview";
 import { nextSavedPlan } from "../shared/saved-route";
 import { SelectedJourney } from "./SelectedJourney";
+import { Button, Empty, Modal, Notice, displayFailure } from "./feedback";
+import { broadcastWebsiteLock } from "./private-session";
 const setupConfig: AppConfig = {
   mode: "setup",
   authConfigured: false,
@@ -95,6 +96,8 @@ const devicePreferences = () => {
   }
 };
 export default function App() {
+  const queryClient = useQueryClient();
+  const profileMenu = useRef<HTMLDetailsElement>(null);
   const {
       locale,
       plan,
@@ -182,6 +185,7 @@ export default function App() {
   const go = (path: string) => {
     history.pushState(null, "", path === "today" ? "/" : "/" + path);
     setPage(path);
+    if (profileMenu.current) profileMenu.current.open = false;
     setError("");
   };
   useEffect(() => {
@@ -211,7 +215,7 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (!config.authConfigured) return;
-    configureAuth(config);
+    try { configureAuth(config); } catch { setError(t.authFailed); return; }
     if (!supabase) return;
     supabase.auth
       .getSession()
@@ -242,7 +246,7 @@ export default function App() {
       .then(v => {if(active) setRole(v.role);}).catch(() => {});
     api<SavedRoute[]>("/api/routes")
       .then(rows => {if(active) setSaved(rows);})
-      .catch(e => {if(active) {setRoutesError(true); setError((e as Error).message);}})
+      .catch(e => {if(active) {setRoutesError(true); setError(displayFailure(e, locale));}})
       .finally(() => {if(active) setRoutesLoading(false);});
     api<any[]>("/api/preferences")
       .then(rows => {
@@ -310,7 +314,7 @@ export default function App() {
       const route = {...p, demo: p.origin.source === "demo"};
       if (now) await leaveNow(route);
       else await analyze(route, route);
-    } catch (e) {setError((e as Error).message);}
+    } catch (e) {setError(displayFailure(e, locale));}
   }
   async function analyze(p: Plan, restored?: Plan) {
     setError("");
@@ -339,7 +343,7 @@ export default function App() {
       setSelected(a.best ?? a.lowest);
       go("results");
     } catch (e) {
-      if (version === requestVersion.current) setError(locale === "ar" ? t.error : (e as Error).message);
+      if (version === requestVersion.current) setError(displayFailure(e, locale));
     } finally {
       forecastInFlight.current = false;
       setBusy(false);
@@ -399,7 +403,7 @@ export default function App() {
       setSaveOpen(false);
       setNotice(t.saved);
     } catch (e) {
-      setError(locale === "ar" ? t.error : (e as Error).message);
+      setError(displayFailure(e, locale));
     }
   }
   async function deleteRoute(r: SavedRoute) {
@@ -417,7 +421,7 @@ export default function App() {
         setSaved(rows);
       }
     } catch (e) {
-      setError((e as Error).message);
+      setError(displayFailure(e, locale));
     }
   }
   async function runWeek() {
@@ -477,7 +481,7 @@ export default function App() {
           );
         } catch (e) {
           list.push(null);
-          setError(locale === "ar" ? t.error : (e as Error).message);
+          setError(displayFailure(e, locale));
           if (
             e instanceof ApiFailure &&
             [401, 403, 429, 503].includes(e.status)
@@ -491,7 +495,7 @@ export default function App() {
         setWeekly([...list]);
       }
     } catch (e) {
-      setError(locale === "ar" ? t.error : (e as Error).message);
+      setError(displayFailure(e, locale));
     } finally {
       setBusy(false);
       setWeekProgress(0);
@@ -518,7 +522,7 @@ export default function App() {
       if (version !== requestVersion.current) return;
       setInstant({...response, plan: currentPlan}); setSelected(response.candidate); go("results");
     } catch (e) {
-      if (version === requestVersion.current) setError(locale === "ar" ? t.error : (e as Error).message);
+      if (version === requestVersion.current) setError(displayFailure(e, locale));
     } finally {forecastInFlight.current = false; setBusy(false);}
   }
   async function savePreferences() {
@@ -550,7 +554,7 @@ export default function App() {
       setPlan({ ...plan, safetyBufferMinutes: prefs.safety_buffer });
       setNotice(t.updated);
     } catch (e) {
-      setError((e as Error).message);
+      setError(displayFailure(e, locale));
     }
   }
   async function enablePush() {
@@ -580,7 +584,7 @@ export default function App() {
       setPush(true);
       setNotice(t.pushEnabled);
     } catch (e) {
-      setError((e as Error).message);
+      setError(displayFailure(e, locale));
     }
   }
   async function disablePush() {
@@ -590,9 +594,46 @@ export default function App() {
       await (await r.pushManager.getSubscription())?.unsubscribe();
       setPush(false);
     } catch (e) {
-      setError((e as Error).message);
+      setError(displayFailure(e, locale));
     }
   }
+  function clearProtected() {
+    requestVersion.current++;
+    setUser(null); setRole("user"); setSaved([]); setSavedFor(null); setPush(false); setTripStart(null);
+    setOrigin(null); setDestination(null); setQuickRouteId(""); setInstant(null); setAnalysis(null); setSelected(null); setWeekly([]);
+    restoredOwner.current = null;
+    setPrefs({locale, ...devicePreferences(), measurement_opt_in:false});
+    setSaveOpen(false); setEditingId(null); setAuthOpen(false); setEmail(""); setName(""); setReminders(false); setNotice("");
+    const reset = defaultPlan();
+    setPlan(reset); form.reset(reset);
+    queryClient.removeQueries({predicate:query => query.queryKey[0] !== "config"});
+  }
+  async function lockWebsite() {
+    setBusy(true); setError("");
+    try {
+      const response = await fetch("/private/lock", {method:"POST", headers:{Accept:"application/json"}});
+      if (!response.ok) throw new ApiFailure(response.status, "Website lock failed.");
+      clearProtected(); broadcastWebsiteLock(); location.assign("/");
+    } catch (error) {setError(displayFailure(error, locale));}
+    finally {setBusy(false);}
+  }
+  async function signOutPersonal(lock = false) {
+    setBusy(true); setError("");
+    try {
+      const result = await supabase?.auth.signOut({scope:"local"});
+      if (result?.error) throw result.error;
+      clearProtected();
+      if (lock) await lockWebsite();
+    } catch (error) {setError(displayFailure(error, locale));}
+    finally {setBusy(false);}
+  }
+  useEffect(() => {
+    const changed = (event: StorageEvent) => {
+      if (event.key === "traffic.websiteLocked" || (event.key === "traffic.authGateSession" && config.privateSessionId && event.newValue !== config.privateSessionId)) {clearProtected(); location.reload();}
+    };
+    window.addEventListener("storage", changed);
+    return () => window.removeEventListener("storage", changed);
+  }, [config.privateSessionId]);
   function exportRoutes() {
     const blob = new Blob([JSON.stringify(visibleSaved, null, 2)], {
         type: "application/json",
@@ -609,7 +650,6 @@ export default function App() {
     { id: "plan", label: t.plan, icon: Navigation },
     { id: "week", label: t.week, icon: CalendarDays },
     { id: "routes", label: t.routes, icon: Bookmark },
-    { id: "settings", label: t.settings, icon: Settings },
   ];
 
   const resultBody = analysis && (
@@ -724,18 +764,8 @@ export default function App() {
       onSubmit={page === "today" ? e => {e.preventDefault(); if (origin && destination && accessReady && !busy && online) void leaveNow(); else setError(t.locationMissing);} : form.handleSubmit(p => analyze(p), errors => setError(errors.latestTime || errors.endDate || errors.date ? t.windowError : t.locationMissing))}
       className="planner-form"
     >
-      {<section className="quick-routes" aria-label={t.quickRoutes}>
-        <label>{t.quickRoutes}<select value={quickRouteId} disabled={busy || routesLoading || visibleSaved.length === 0} onChange={e => {
-          const r = visibleSaved.find(r => r.id === e.target.value);
-          if(r) {try {useRoute(r, true);} catch(e) {setError((e as Error).message);}}
-        }}><option value="">{routesLoading ? t.loadingRoutes : t.chooseRoute}</option>{visibleSaved.map(r => <option key={r.id} value={r.id}>{r.name} · {r.plan.destination.displayName}</option>)}</select></label>
-        <p className="micro-copy">{!user && visibleSaved.length === 0 ? t.savedSignInHelp : !routesLoading && !routesError && visibleSaved.length === 0 ? t.savedEmptyHelp : t.quickRoutesHelp}</p>
-        {!user && visibleSaved.length === 0 && config.authConfigured && <button type="button" className="button secondary" onClick={() => setAuthOpen(true)}>{t.signin}</button>}
-        {routesError && <button type="button" className="button secondary" onClick={() => setRoutesReload(v => v+1)}>{t.retryRoutes}</button>}
-      </section>}
       <div className="section-heading">
         <div>
-          <span className="eyebrow">{t.ready}</span>
           <h1>{page === "today" ? t.todayJourney : t.plan}</h1>
           <p>{page === "today" ? t.todayHelp : t.planHelp}</p>
           {config.publicBeta && !user && !demo && !guestReady && (
@@ -744,6 +774,15 @@ export default function App() {
         </div>
         <SlidersHorizontal size={20} />
       </div>
+      {<section className="quick-routes" aria-label={t.quickRoutes}>
+        <label>{t.quickRoutes}<select value={quickRouteId} disabled={busy || routesLoading || visibleSaved.length === 0} onChange={e => {
+          const r = visibleSaved.find(r => r.id === e.target.value);
+          if(r) {try {useRoute(r, true);} catch(e) {setError(displayFailure(e, locale));}}
+        }}><option value="">{routesLoading ? t.loadingRoutes : t.chooseRoute}</option>{visibleSaved.map(r => <option key={r.id} value={r.id}>{r.name} · {r.plan.destination.displayName}</option>)}</select></label>
+        <Empty>{!user && visibleSaved.length === 0 ? t.savedSignInHelp : !routesLoading && !routesError && visibleSaved.length === 0 ? t.savedEmptyHelp : t.quickRoutesHelp}</Empty>
+        {!user && visibleSaved.length === 0 && config.authConfigured && <button type="button" className="button secondary" onClick={() => setAuthOpen(true)}>{t.signin}</button>}
+        {routesError && <button type="button" className="button secondary" onClick={() => setRoutesReload(v => v+1)}>{t.retryRoutes}</button>}
+      </section>}
       {config.publicBeta && !user && !demo && config.turnstileSiteKey && !guestReady && (
         <GuestAccess
           siteKey={config.turnstileSiteKey}
@@ -889,7 +928,7 @@ export default function App() {
             Optimizer
           </strong>
         </a>
-        <nav>
+        <nav aria-label={t.app}>
           {navs.map((n) => (
             <a
               key={n.id}
@@ -908,19 +947,7 @@ export default function App() {
               {n.label}
             </a>
           ))}
-          {role === "admin" && (
-            <a
-              href="/admin"
-              className={page === "admin" ? "active" : ""}
-              onClick={(e) => {
-                e.preventDefault();
-                go("admin");
-              }}
-            >
-              <Shield size={20} />
-              {t.owner}
-            </a>
-          )}
+
         </nav>
         <div className="sidebar-bottom">
           <div className="side-tip">
@@ -969,7 +996,7 @@ export default function App() {
             <b>
               {page === "results"
                 ? t.results
-                : (navs.find((n) => n.id === page)?.label ?? t.owner)}
+                : (navs.find((n) => n.id === page)?.label ?? (page === "settings" ? t.settings : t.owner))}
             </b>
           </div>
           <div className="topbar-actions">
@@ -991,18 +1018,15 @@ export default function App() {
             >
               {locale === "en" ? "ع" : "EN"}
             </button>
-            <button
-              className={user ? "avatar" : "button secondary small"}
-              title={user ?? t.signin}
-              aria-label={user ?? t.signin}
-              onClick={() => (user ? go("settings") : setAuthOpen(true))}
-            >
-              {user ? (
-                user[0].toUpperCase()
-              ) : (
-                <span>{t.signin}</span>
-              )}
-            </button>
+            <details className="profile-menu" ref={profileMenu} onKeyDown={event => {if(event.key === "Escape") {event.currentTarget.open = false;event.currentTarget.querySelector("summary")?.focus();}}}>
+              <summary className="avatar" aria-label={t.accountMenu} title={t.accountMenu}>{user ? user[0].toUpperCase() : <Settings size={20}/>}</summary>
+              <div className="profile-actions">
+                {user ? <p><bdi>{user}</bdi></p> : <Button className="button secondary" onClick={() => {setAuthOpen(true);if(profileMenu.current)profileMenu.current.open=false;}}>{t.signin}</Button>}
+                <a href="/settings" onClick={event => {event.preventDefault();go("settings");}}><Settings size={18}/>{t.settings}</a>
+                {role === "admin" && user && <a href="/admin" onClick={event => {event.preventDefault();go("admin");}}><Shield size={18}/>{t.owner}</a>}
+              </div>
+            </details>
+            {!user && <Button className="button secondary small" onClick={() => setAuthOpen(true)}>{t.signin}</Button>}
           </div>
         </header>
         <div className="workspace">
@@ -1012,12 +1036,13 @@ export default function App() {
             </div>
           )}
           {error && (
-            <div className="banner error" role="alert">
-              {error}
+            <Notice>
+              <span>{error}</span>
+              {error === t.accountRequired && <Button className="button secondary small" onClick={() => setAuthOpen(true)}>{t.signin}</Button>}
               <button aria-label={t.close} onClick={() => setError("")}>
                 <X size={18} />
               </button>
-            </div>
+            </Notice>
           )}
           {notice && (
             <div className="banner success" role="status">
@@ -1134,25 +1159,7 @@ export default function App() {
                     </button>
                   </section>
                 )}
-                {page !== "results" && !analysis && (
-                  <div className="journey-benefits">
-                    <div>
-                      <Clock size={20} />
-                      <span>{t.departure}</span>
-                      <p>{t.best}</p>
-                    </div>
-                    <div>
-                      <Leaf size={20} />
-                      <span>{t.shortest}</span>
-                      <p>{t.drive}</p>
-                    </div>
-                    <div>
-                      <Shield size={20} />
-                      <span>{t.buffer}</span>
-                      <p>{t.arrive_between}</p>
-                    </div>
-                  </div>
-                )}
+
               </div>
             </div>
           )}
@@ -1434,15 +1441,8 @@ export default function App() {
                   {user ? (
                     <>
                       <p>{user}</p>
-                      <button
-                        className="button secondary"
-                        onClick={async () => {
-                          await supabase?.auth.signOut();
-                          setUser(null);
-                        }}
-                      >
-                        {t.signout}
-                      </button>
+                      <Button className="button secondary" disabled={busy} onClick={() => void signOutPersonal()}>{t.localSignOut}</Button>
+                      <p className="micro-copy">{t.localSignOutHelp}</p>
                     </>
                   ) : (
                     <>
@@ -1455,7 +1455,11 @@ export default function App() {
                       </button>
                     </>
                   )}
-                  {config.privateAccess && <form method="post" action="/private/lock"><button className="button secondary" type="submit">{t.lockSite}</button><p className="micro-copy">{t.privateAccountHelp}</p></form>}
+                  {config.privateAccess && <div className="website-actions">
+                    <form method="post" action="/private/lock" onSubmit={event => {event.preventDefault();void lockWebsite();}}><Button className="button secondary" type="submit" disabled={busy}>{t.lockSite}</Button></form>
+                    <Button className="button secondary" disabled={busy} onClick={() => void signOutPersonal(true)}>{t.lockAndSignOut}</Button>
+                    <p className="micro-copy">{t.privateAccountHelp}</p>
+                  </div>}
                   <hr />
                   <label>
                     {t.language}
@@ -1560,7 +1564,7 @@ export default function App() {
                             setTripStart(null);
                             setNotice(t.tripRecorded);
                           } catch (e) {
-                            setError((e as Error).message);
+                            setError(displayFailure(e, locale));
                           }
                         }
                       }}
@@ -1639,15 +1643,7 @@ export default function App() {
           </a>
         ))}
       </nav>
-      <Dialog.Root open={saveOpen} onOpenChange={setSaveOpen}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="dialog-overlay" />
-          <Dialog.Content className="dialog-content">
-            <Dialog.Title>{editingId ? t.edit : t.save}</Dialog.Title>
-            <Dialog.Description>{t.saveHelp}</Dialog.Description>
-            <Dialog.Close className="dialog-close" aria-label={t.close}>
-              <X size={20} />
-            </Dialog.Close>
+      {saveOpen && <Modal title={editingId ? t.edit : t.save} description={t.saveHelp} closeLabel={t.close} onClose={() => setSaveOpen(false)} busy={busy}>
             <label>
               {t.routeName}
               <input
@@ -1699,9 +1695,7 @@ export default function App() {
             >
               {t.save}
             </button>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+      </Modal>}
       {authOpen && <SignInDialog config={config} email={email} onEmail={setEmail} onClose={() => setAuthOpen(false)} />}
     </div>
   );

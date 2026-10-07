@@ -14,11 +14,11 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npx playwright install --with-deps chromium
-      - run: npx wrangler dev --env verification --port 8787 > /tmp/traffic-server.log 2>&1 &
+      - run: npx wrangler dev --env verification --port 8787 --inspector-port 9230 > /tmp/traffic-server.log 2>&1 &
         env:
           WRANGLER_SEND_METRICS: false
       - run: node scripts/private-fixture.mjs
-      - run: npx wrangler dev --env privatecheck --port 8788 > /tmp/traffic-private-server.log 2>&1 &
+      - run: npx wrangler dev --env privatecheck --port 8788 --inspector-port 9231 > /tmp/traffic-private-server.log 2>&1 &
         env:
           WRANGLER_SEND_METRICS: false
       - run: |
@@ -38,3 +38,11 @@ jobs:
         env:
           TEST_BASE_URL: http://127.0.0.1:8787
           PRIVATE_TEST_BASE_URL: http://127.0.0.1:8788
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-acceptance
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

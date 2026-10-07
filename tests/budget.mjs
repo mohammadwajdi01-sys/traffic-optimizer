@@ -3,6 +3,7 @@ import { writeFileSync, readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import {pbkdf2Sync,createHmac} from "node:crypto";
 const privateFixture={username:"fixture user",salt:"a1".repeat(16),hash:pbkdf2Sync("fixture-password",Buffer.from("a1".repeat(16),"hex"),100000,32,"sha256").toString("hex"),signingKey:"b2".repeat(32)};
+const guestFixture={username:"invited guest",salt:"c3".repeat(16),hash:pbkdf2Sync("guest-fixture-password",Buffer.from("c3".repeat(16),"hex"),100000,32,"sha256").toString("hex")};
 let privateAssetReads=0;
 writeFileSync(
   "artifacts/worker/test-entry.js",
@@ -30,7 +31,7 @@ const mf = new Miniflare(
   convertV4MiniflareOptions({
     telemetry: { enabled: false },
     workers: [
-      {name:"private",modules:true,scriptPath:"artifacts/worker/index.js",compatibilityDate:"2026-10-05",compatibilityFlags:["nodejs_compat"],durableObjects:{BUDGET:{className:"BudgetLedger",useSQLite:true}},bindings:{PRIVATE_ACCESS_REQUIRED:"true",PRIVATE_ACCESS_CREDENTIALS:JSON.stringify(privateFixture),PUBLIC_BETA:"false"},serviceBindings:{ASSETS:request=>{if(new URL(request.url).pathname === "/sw.js") return new Response(readFileSync("public/sw.js","utf8"));privateAssetReads++;return new Response("fixture app asset");}}},
+      {name:"private",modules:true,scriptPath:"artifacts/worker/index.js",compatibilityDate:"2026-10-05",compatibilityFlags:["nodejs_compat"],durableObjects:{BUDGET:{className:"BudgetLedger",useSQLite:true}},bindings:{PRIVATE_ACCESS_REQUIRED:"true",PRIVATE_ACCESS_CREDENTIALS:JSON.stringify(privateFixture),PRIVATE_GUEST_ACCESS_CREDENTIALS:JSON.stringify(guestFixture),PUBLIC_BETA:"false"},serviceBindings:{ASSETS:request=>{if(new URL(request.url).pathname === "/sw.js") return new Response(readFileSync("public/sw.js","utf8"));privateAssetReads++;return new Response("fixture app asset");}}},
       {name:"private-missing",modules:true,scriptPath:"artifacts/worker/index.js",compatibilityDate:"2026-10-05",compatibilityFlags:["nodejs_compat"],bindings:{PRIVATE_ACCESS_REQUIRED:"true"},serviceBindings:{ASSETS:()=>new Response("must not leak")}},
       {
         name: "verification",
@@ -111,20 +112,34 @@ try {
   assert.equal((await unlock({},"203.0.113.90","https://127.0.0.1")).status,403);
   const wrongLogin=await unlock({password:"wrong"},"203.0.113.91");assert.equal(wrongLogin.status,401,await wrongLogin.text());
   const login=await unlock();assert.equal(login.status,303);assert.equal(login.headers.get("Location"),"/plan");
-  const setCookie=login.headers.get("Set-Cookie");assert.match(setCookie,/__Host-traffic_private=/);assert.match(setCookie,/Secure; HttpOnly; SameSite=Lax; Path=\/; Max-Age=43200/);
+  const setCookie=login.headers.get("Set-Cookie");assert.match(setCookie,/__Host-traffic_private=/);assert.match(setCookie,/Secure; HttpOnly; SameSite=Lax; Path=\//);assert.ok(!setCookie.split(",")[0].includes("Max-Age"));
   const cookie=setCookie.split(";")[0];
+  assert.match(cookie,/=v2\.[a-f0-9]{32}\.\d{13}\.owner\./);
   const opened=await locked.fetch("https://localhost/plan",{headers:{Cookie:cookie}});assert.equal(await opened.text(),"fixture app asset");assert.match(opened.headers.get("Cache-Control"),/no-store/);
   assert.equal((await locked.fetch("https://localhost/api/health",{headers:{Cookie:cookie}})).status,200);
   const account=await locked.fetch("https://localhost/api/routes",{headers:{Cookie:cookie}});assert.equal(account.status,401);assert.notEqual((await account.json()).privateAccess,true);
   assert.equal((await locked.fetch("https://localhost/api/config",{headers:{Authorization:"Bearer unrelated-user-token"}})).status,401);
   assert.equal((await locked.fetch("https://other.test/api/config",{headers:{Cookie:cookie}})).status,401);
   assert.equal((await locked.fetch("https://localhost/api/config",{headers:{Cookie:cookie.slice(0,-1)+(cookie.endsWith("a")?"b":"a")}})).status,401);
-  const expired=String(Date.now()-1000), signature=createHmac("sha256",Buffer.from(privateFixture.signingKey,"hex")).update(`${expired}:localhost:${privateFixture.hash}`).digest("hex");
-  assert.equal((await locked.fetch("https://localhost/api/config",{headers:{Cookie:`__Host-traffic_private=${expired}.${signature}`}})).status,401);
+  const parts=cookie.slice(cookie.indexOf("=")+1).split("."), expired=String(Date.now()-1000);
+  const signature=createHmac("sha256",Buffer.from(privateFixture.signingKey,"hex")).update(`v2:${parts[1]}:${expired}:owner:localhost:${privateFixture.hash}`).digest("hex");
+  assert.equal((await locked.fetch("https://localhost/api/config",{headers:{Cookie:`__Host-traffic_private=v2.${parts[1]}.${expired}.owner.${signature}`}})).status,401);
+  const remembered=await unlock({remember:"yes",next:"/settings?test=return#callback"},"203.0.113.94");
+  assert.match(remembered.headers.get("Set-Cookie"),/Max-Age=604800/);assert.equal(remembered.headers.get("Location"),"/settings?test=return#callback");
+  const guestLogin=await unlock({username:guestFixture.username,password:"guest-fixture-password"},"203.0.113.95");
+  assert.equal(guestLogin.status,303);const guestCookie=guestLogin.headers.get("Set-Cookie").split(";")[0];assert.match(guestCookie,/\.guest\./);
+  const guestConfig=await locked.fetch("https://localhost/api/config",{headers:{Cookie:guestCookie}});assert.equal(guestConfig.status,200);assert.match((await guestConfig.json()).privateSessionId,/^[a-f0-9]{32}$/);
+  assert.equal((await locked.fetch("https://localhost/api/admin",{headers:{Cookie:guestCookie}})).status,401);
+  const arabic=await locked.fetch("https://localhost/plan?case=1",{headers:{Accept:"text/html",Cookie:"__Host-traffic_language=ar"}});const arabicPage=await arabic.text();assert.match(arabicPage,/<html lang="ar" dir="rtl">/);assert.ok(!arabicPage.includes("Welcome back"));assert.match(arabic.headers.get("Content-Security-Policy"),/script-src 'nonce-/);assert.match(arabicPage,/name="next" value="\/plan\?case=1"/);
+  const language=await locked.fetch("https://localhost/private/language",{method:"POST",headers:{Origin:"https://localhost","Content-Type":"application/x-www-form-urlencoded"},body:"language=ar&next=%2Fplan%3Fcase%3D1",redirect:"manual"});assert.equal(language.status,303);assert.match(language.headers.get("Set-Cookie"),/__Host-traffic_language=ar/);assert.equal(language.headers.get("Location"),"/plan?case=1");
   assert.equal((await unlock({next:"https://foreign.test"},"203.0.113.92")).headers.get("Location"),"/");
   for(let i=0;i<5;i++) assert.equal((await unlock({password:"wrong"},"203.0.113.93")).status,401);
   assert.equal((await unlock({},"203.0.113.93")).status,429);
   const logout=await locked.fetch("https://localhost/private/lock",{method:"POST",headers:{Origin:"https://localhost",Cookie:cookie},redirect:"manual"});assert.equal(logout.status,303);assert.match(logout.headers.get("Set-Cookie"),/Max-Age=0/);
+  assert.equal((await locked.fetch("https://localhost/api/config",{headers:{Cookie:cookie}})).status,401,"Locked session replay must fail");
+  assert.equal((await locked.fetch("https://localhost/api/config",{headers:{Cookie:guestCookie}})).status,200,"Other session remains unlocked");
+  const jsonLock=await locked.fetch("https://localhost/private/lock",{method:"POST",headers:{Origin:"https://localhost",Cookie:guestCookie,Accept:"application/json"}});assert.equal(jsonLock.status,200);assert.equal((await jsonLock.json()).locked,true);
+  assert.equal((await locked.fetch("https://localhost/api/config",{headers:{Cookie:guestCookie}})).status,401);
   console.log("Private website gate passed: deep links/assets/APIs denied, missing secret fails closed, signed session/expiry/host/origin checks, throttle and logout.");
   }
   const mainWorker = await mf.getWorker("traffic");

@@ -133,7 +133,8 @@ test("failed guest verification provides a visible account sign-in path without 
   await verification.getByRole("button",{name:"Sign in",exact:true}).click();
   await expect(page.getByRole("dialog",{name:"Sign in"})).toBeVisible();
   await expect(page.getByRole("textbox",{name:"Email address"})).toBeVisible();
-  await page.getByRole("dialog").getByRole("button",{name:"Close",exact:true}).click();
+  await page.keyboard.press("Escape");
+  await expect(verification.getByRole("button",{name:"Sign in",exact:true})).toBeFocused();
   await expect(page.getByRole("button",{name:"Find best time"})).toBeDisabled();
   await expect(page.getByRole("button",{name:"Share location for nearby results"})).toBeDisabled();
   await expect(page.getByRole("combobox",{name:"From",exact:true})).toHaveValue("Route preserved after sign-in");
@@ -206,5 +207,24 @@ test("Today checks leaving now while Plan explains future windows and both expos
   await expect(page.getByRole("combobox",{name:"Use a saved route"})).toBeVisible();
   await page.getByRole("button",{name:"ع",exact:true}).click();
   await expect(page.getByRole("combobox",{name:"استخدام رحلة محفوظة"})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+
+
+test("coordinate dialog supports keyboard errors, Escape and focus recovery",async({page})=>{
+  await page.route("**/api/config",route=>route.fulfill({json:{mode:"setup",authConfigured:false,searchConfigured:false,trafficConfigured:false,mapConfigured:false,publicBeta:false,detectedCountry:"JO"}}));
+  await page.goto("/plan");
+  const from=page.getByRole("combobox",{name:"From",exact:true});
+  await from.click();
+  await page.getByRole("button",{name:"Use coordinates",exact:true}).click();
+  const dialog=page.getByRole("dialog",{name:"Use coordinates",exact:true});
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Paste coordinates (latitude, longitude)").fill("invalid");
+  await dialog.getByRole("button",{name:"Use location",exact:true}).click();
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  await expect(dialog.getByLabel("Paste coordinates (latitude, longitude)")).toHaveAttribute("aria-invalid","true");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(from).toBeFocused();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });

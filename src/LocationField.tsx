@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { LocateFixed, MapPin, Search } from "lucide-react";
 import type { Location } from "../shared/types";
 import { demoLocations } from "../shared/demo";
+import { FieldError, Modal, Pending, displayFailure } from "./feedback";
 import { api } from "./api";
 import { en, ar } from "./i18n";
 import { useStore } from "./store";
@@ -72,7 +73,7 @@ export function LocationField({
         if (run === seq.current) setList(res.locations.filter(l => l.countryCode?.toUpperCase() === searchContext.countryCode));
       } catch (e) {
         if (run === seq.current)
-          setError(locale === "ar" ? t.error : (e as Error).message);
+          setError(displayFailure(e, locale));
       } finally {
         if (run === seq.current) setBusy(false);
       }
@@ -102,6 +103,8 @@ export function LocationField({
           aria-expanded={open}
           aria-controls={gps ? "from-options" : "to-options"}
           aria-autocomplete="list"
+          aria-invalid={Boolean(error && !manual)}
+          aria-describedby={error && !manual ? `${gps ? "from" : "to"}-error` : undefined}
           aria-activedescendant={
             open && active >= 0
               ? `${gps ? "from" : "to"}-option-${active}`
@@ -161,7 +164,7 @@ export function LocationField({
           id={gps ? "from-options" : "to-options"}
         >
           {busy ? (
-            <div>{t.searching}</div>
+            <Pending>{t.searching}</Pending>
           ) : (
             list.map((l, index) => (
               <button
@@ -203,11 +206,12 @@ export function LocationField({
           {searchEnabled && <small>{t.searchAttribution}</small>}
         </div>
       )}
-      {error && !manual && <span className="field-error" role="alert">{error}</span>}
+      {error && !manual && <FieldError id={`${gps ? "from" : "to"}-error`}>{error}</FieldError>}
       {manual && (
-        <div className="manual-panel">
-          <p>{t.manualHelp}</p>
-          <label>{t.coordinatePair}<input type="text" dir="ltr" placeholder="31.9455631, 35.9271963" value={pair} onChange={e => {
+        <Modal title={t.manual} description={t.manualHelp} closeLabel={t.close} focusTarget={() => root.current?.querySelector<HTMLInputElement>('input[role="combobox"]') ?? null} onClose={() => {setManual(false);setError("");}}>
+        <div className="coordinate-fields">
+
+          <label>{t.coordinatePair}<input type="text" dir="ltr" aria-invalid={Boolean(error)} aria-describedby={error ? `${gps ? "from" : "to"}-coordinate-error` : undefined} placeholder="31.9455631, 35.9271963" value={pair} onChange={e => {
             setPair(e.target.value);
             const parts = normalizeDigits(e.target.value).trim().split(/[,;\s]+/).filter(Boolean);
             if (parts.length === 2) { setLat(parts[0]); setLng(parts[1]); setError(""); }
@@ -252,11 +256,12 @@ export function LocationField({
           >
             {t.apply}
           </button>
-          {error && <p className="field-error" role="alert">{error}</p>}
+          <FieldError id={`${gps ? "from" : "to"}-coordinate-error`}>{error}</FieldError>
           <button type="button" onClick={() => {setManual(false); setError("");}}>
             {t.cancel}
           </button>
         </div>
+        </Modal>
       )}
     </div>
   );
