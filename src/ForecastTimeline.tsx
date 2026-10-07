@@ -27,7 +27,7 @@ export function ForecastTimeline({analysis,selected,onSelect,locale}: {analysis:
         <circle cx={x(at(c))} cy={y(c)} r="15" fill="transparent"/><circle cx={x(at(c))} cy={y(c)} r={chosen(c)?8:5} className={allowed && analysis.best && journeyKey(c)===journeyKey(analysis.best)?"chart-best":"chart-point"}/><title>{readable(c)}</title>
       </g>:<circle key={journeyKey(c)} cx={x(at(c))} cy={y(c)} r="4" className="chart-outside"><title>{readable(c)} · {t.outsideBounds}</title></circle>)}
       {!arrival && missing.filter(time=>Date.parse(time)>=start && Date.parse(time)<=end).map(time=><text key={time} x={x(Date.parse(time))} y="220" className="chart-missing" textAnchor="middle">×<title>{t.notSampled} · {clock(time,p.timezone,locale)}</title></text>)}
-      {[0,1,2,3,4].map(i=><text key={i} x={x(start+(end-start)*i/4)} y="245" textAnchor={i===0?"start":i===4?"end":"middle"}>{clock(new Date(start+(end-start)*i/4).toISOString(),p.timezone,locale)}</text>)}
+      {[0,1,2,3,4].map(i=><text key={i} data-tick={i} x={x(start+(end-start)*i/4)} y="245" textAnchor={i===0?"start":i===4?"end":"middle"}>{clock(new Date(start+(end-start)*i/4).toISOString(),p.timezone,locale)}</text>)}
       <text x="344" y="277" textAnchor="middle">{arrival?t.arrivalAxis:t.departureAxis}</text>
     </svg>
     <p className="micro-copy">{missing.length?t.timelineMissing:t.timelineHelp}</p>
