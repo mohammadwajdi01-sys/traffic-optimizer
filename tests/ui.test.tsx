@@ -12,6 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "../src/App";
 import {MapPreview} from "../src/MapPreview";
+import {mapFailure} from "../src/map-failure";
 import GuestAccess from "../src/GuestAccess";
 import SignInDialog from "../src/SignInDialog";
 import {preparePrivateAccount} from "../src/private-session";
@@ -35,11 +36,11 @@ const auth = vi.hoisted(() => ({
   })),
 }));
 vi.mock("@supabase/supabase-js", () => ({ createClient: () => ({ auth }) }));
-const mapMock = vi.hoisted(() => ({status:"unavailable",rtl:vi.fn(),create:vi.fn(),language:vi.fn(),remove:vi.fn(),marker:vi.fn(),markerRemove:vi.fn(),center:vi.fn(),source:vi.fn(),bounds:vi.fn()}));
+const mapMock = vi.hoisted(() => ({status:"unavailable",rtl:vi.fn(),create:vi.fn(),language:vi.fn(),remove:vi.fn(),marker:vi.fn(),markerRemove:vi.fn(),center:vi.fn(),source:vi.fn(),bounds:vi.fn(),callbacks:{} as Record<string,Set<(event:any)=>void>>}));
 vi.mock("mapbox-gl",()=>({default:{
   getRTLTextPluginStatus:()=>mapMock.status,
   setRTLTextPlugin:(...args:any[])=>{mapMock.rtl(...args);mapMock.status="deferred";},
-  Map:class {constructor(options:any){mapMock.create(options);}addControl(){}on(name:string,callback:any){if(name==="load") queueMicrotask(callback);}off(){}remove(){mapMock.remove();}setLanguage(language:string){mapMock.language(language);}isStyleLoaded(){return true;}getSource(){return {setData:mapMock.source};}easeTo(options:any){mapMock.center(options);}fitBounds(options:any){mapMock.bounds(options);}},
+  Map:class {constructor(options:any){mapMock.create(options);mapMock.callbacks={};}addControl(){}on(name:string,callback:any){(mapMock.callbacks[name]??=new Set()).add(callback);if(name==="load") queueMicrotask(callback);}off(name:string,callback:any){mapMock.callbacks[name]?.delete(callback);}remove(){mapMock.remove();}setLanguage(language:string){mapMock.language(language);}isStyleLoaded(){return true;}getSource(){return {setData:mapMock.source};}easeTo(options:any){mapMock.center(options);}fitBounds(options:any){mapMock.bounds(options);}},
   NavigationControl:class {},
   Marker:class {setLngLat(coords:any){mapMock.marker(coords);return this;}addTo(){return this;}remove(){mapMock.markerRemove();}},
   LngLatBounds:class {extend(){return this;}},
@@ -704,6 +705,57 @@ describe("Quick account routes and departure choices", () => {
   });
 });
 
+
+describe("Map failure recovery",()=>{
+  it("separates map access, allowance, setup and graphics failures without exposing raw errors",()=>{
+    expect(mapFailure(new ApiFailure(429,'Reached limit.'))).toBe('allowance');
+    expect(mapFailure(new ApiFailure(503,'The map is not configured yet.'))).toBe('setup');
+    expect(mapFailure(new Error('Failed to initialize WebGL.'))).toBe('browser');
+    expect(mapFailure({status:401,message:'provider-secret'})).toBe('access');
+    expect(mapFailure(new Error('https://example.invalid?access_token=secret'))).toBe('network');
+  });
+  it("keeps the map and pins when the Arabic label loader fails",async()=>{
+    mapMock.status='unavailable';mapMock.rtl.mockClear();
+    vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,json:async()=>({token:'unit-map'})})));
+    useStore.getState().setLocale('ar');
+    const view=render(<MapPreview origin={{displayName:'Origin',latitude:31.95,longitude:35.91}} destination={null} mapEnabled/>);
+    await waitFor(()=>expect(mapMock.rtl).toHaveBeenCalledTimes(1));
+    const canvas=view.container.querySelector('.map-canvas');
+    act(()=>mapMock.rtl.mock.calls[0][1](new Error('label-loader-failure')));
+    expect(screen.getByText(ar.mapLabelsHelp)).toBeTruthy();
+    expect(view.container.querySelector('.map-canvas')).toBe(canvas);
+    expect(screen.queryByRole('heading',{name:ar.mapError})).toBeNull();
+    mapMock.status='error';
+    await userEvent.setup().click(screen.getByRole('button',{name:ar.mapRetry}));
+    await waitFor(()=>expect(mapMock.rtl).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(ar.mapLabelsHelp)).toBeNull();
+  });
+  it("keeps the canvas attached after a provider error and lets a later load recover without another token request",async()=>{
+    const fetchMap=vi.fn(async()=>({ok:true,json:async()=>({token:"unit-map"})}));
+    vi.stubGlobal("fetch",fetchMap);
+    const view=render(<MapPreview origin={null} destination={null} mapEnabled/>);
+    await waitFor(()=>expect(mapMock.callbacks.error?.size).toBe(1));
+    const canvas=view.container.querySelector('.map-canvas');
+    act(()=>mapMock.callbacks.error.forEach(fn=>fn({error:{status:403,message:'private-token-value'}})));
+    expect(screen.getByText(en.mapAccessHelp)).toBeTruthy();
+    expect(view.container.querySelector('.map-canvas')).toBe(canvas);
+    expect(view.container.textContent).not.toContain('private-token-value');
+    act(()=>mapMock.callbacks.load.forEach(fn=>fn({})));
+    await waitFor(()=>expect(screen.queryByText(en.mapAccessHelp)).toBeNull());
+    expect(fetchMap).toHaveBeenCalledTimes(1);
+  });
+  it("explains a session failure and retries the token request only after an explicit Retry",async()=>{
+    const fetchMap=vi.fn().mockResolvedValueOnce({ok:false,status:401,json:async()=>({error:'Authentication required.'})}).mockResolvedValue({ok:true,json:async()=>({token:'unit-map'})});
+    vi.stubGlobal('fetch',fetchMap);
+    render(<MapPreview origin={null} destination={null} mapEnabled/>);
+    await waitFor(()=>expect(screen.getByText(en.mapSessionHelp)).toBeTruthy());
+    expect(screen.queryByText(en.mapHelp)).toBeNull();
+    expect(fetchMap).toHaveBeenCalledTimes(1);
+    await userEvent.setup().click(screen.getByRole('button',{name:en.mapRetry}));
+    await waitFor(()=>expect(screen.queryByText(en.mapSessionHelp)).toBeNull());
+    expect(fetchMap).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe("Arabic map rendering setup",()=>{
   it("registers RTL shaping before map creation, switches language and avoids duplicate registration",async()=>{

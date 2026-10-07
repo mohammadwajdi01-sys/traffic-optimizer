@@ -1,6 +1,7 @@
 import type { Analysis, Candidate, Plan } from "./types";
 import { feasible, summarize } from "./optimizer";
 import { recommendationAllowed } from "./forecast-reliability";
+import { isArrival } from "./windows";
 export { recommendationAllowed } from "./forecast-reliability";
 
 export const journeyKey = (c: Candidate) => `${c.provider}:${c.departureAt}`;
@@ -16,7 +17,7 @@ export function journeyOptions(a: Analysis) {
   const shortest = summarize(a.samples, {...a.plan, goal:"shortest"}).best;
   const soonest = summarize(a.samples, {...a.plan, goal:"soonest"}).best;
   const rows: {candidate: Candidate; labels: ("shortest"|"soonest"|"latest"|"start")[]}[] = [];
-  for (const [label,candidate] of [["shortest",shortest],["soonest",soonest],["latest",a.latest],["start",a.earliest]] as const) {
+  for (const [label,candidate] of [["shortest",shortest],["soonest",soonest],["latest",a.latest],["start",isArrival(a.plan) ? a.earliest : null]] as const) {
     if (!candidate || !feasible(candidate,a.plan)) continue;
     const row = rows.find(row => journeyKey(row.candidate) === journeyKey(candidate));
     if (row) row.labels.push(label);
