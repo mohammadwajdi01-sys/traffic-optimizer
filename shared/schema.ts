@@ -12,6 +12,7 @@ export const locationSchema = z.object({
 const time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 export const planSchema = z
   .object({
+    goal: z.enum(["shortest", "soonest"]).optional(),
     origin: locationSchema,
     destination: locationSchema,
     mode: z.enum(["arrive_between", "leave_between", "arrive_by", "leave_around", "avoid_traffic"]),

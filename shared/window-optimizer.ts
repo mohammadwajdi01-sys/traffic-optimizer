@@ -3,6 +3,7 @@ import type { Forecast } from "./optimizer";
 import { feasible, summarize } from "./optimizer";
 import { isArrival, selectedWindow } from "./windows";
 import { iso } from "./time";
+import { recommendationAllowed } from "./forecast-reliability";
 
 export async function optimizeWindow(p: Plan, forecast: Forecast, options: {maxCalls?: number; now?: number} = {}): Promise<Analysis> {
   const max = Math.max(1, Math.min(24, options.maxCalls ?? 24)), now = options.now ?? Date.now();
@@ -71,10 +72,11 @@ export async function optimizeWindow(p: Plan, forecast: Forecast, options: {maxC
   const warnings = ["Adaptive scan with minute-level refinement. Only marked departures were checked directly; connecting lines are interpolation."];
   if (calls >= max) warnings.push("Request budget reached. These are the best options among tested departures.");
   if (failed.size) warnings.push("Some forecasts were unavailable. Results cover the tested departures only.");
-  if (!result.best) warnings.push("No tested departure meets your arrival constraints. Increase the window or reduce the buffer.");
+  if (!recommendationAllowed(p)) warnings.push("Forecast accuracy for this route is unvalidated after a reported discrepancy. Automatic traffic recommendations are paused.");
+  else if (!result.best) warnings.push("No tested departure meets your arrival constraints. Increase the window or reduce the buffer.");
   if (result.lowestMetric === "duration") warnings.push("A no-traffic baseline is unavailable. Minimum driving time is shown instead of a congestion claim.");
-  if (samples.some(c => c.trafficCoverage === "unknown")) warnings.push("Traffic coverage is unconfirmed for part of this journey.");
+  if (samples.some(c => c.trafficCoverage !== "available")) warnings.push("Traffic coverage is unconfirmed for part of this journey.");
   const providers = [...new Set(samples.map(c => c.provider))];
   if (providers.length > 1) warnings.push("Providers returned different route estimates. Compare these as separate journey options.");
-  return {id: crypto.randomUUID(), plan: p, samples, ...result, earliest: samples.filter(c => c.feasible).sort((x,y) => Date.parse(x.arrivalAt)-Date.parse(y.arrivalAt))[0] ?? null, searchWindow: [iso(start),iso(finish)], failedDepartures: [...failed].map(iso), provider: providers.join(", "), quality: "limited", partial: calls >= max || failed.size > 0, calls, createdAt: iso(now), warnings};
+  return {id: crypto.randomUUID(), plan: p, samples, ...result, earliest: recommendationAllowed(p) ? samples.filter(c => c.feasible).sort((x,y) => Date.parse(x.arrivalAt)-Date.parse(y.arrivalAt))[0] ?? null : null, searchWindow: [iso(start),iso(finish)], failedDepartures: [...failed].map(iso), provider: providers.join(", "), quality: "limited", partial: calls >= max || failed.size > 0, calls, createdAt: iso(now), warnings};
 }

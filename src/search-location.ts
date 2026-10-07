@@ -5,7 +5,7 @@ import { api } from "./api";
 
 export type SearchLocation = {
   countryCode?: string;
-  position?: { latitude: number; longitude: number; capturedAt: number };
+  position?: { latitude: number; longitude: number; capturedAt: number; accuracyMeters?: number };
   source?: "network" | "manual" | "gps";
 };
 export const useSearchLocation = create<SearchLocation & { setContext: (v: SearchLocation) => void }>((set) => ({
@@ -14,7 +14,7 @@ export const useSearchLocation = create<SearchLocation & { setContext: (v: Searc
 export function freshSearchPosition(context: SearchLocation) {
   return context.position && Date.now() - context.position.capturedAt < 15 * 60000 ? context.position : undefined;
 }
-export async function browserLocation(language: "en" | "ar", searchEnabled: boolean): Promise<Location> {
+export async function browserLocation(language: "en" | "ar", searchEnabled: boolean): Promise<Location & {accuracyMeters?:number;capturedAt:number}> {
   if (!navigator.geolocation) throw new Error("Location is unavailable.");
   const pos = await new Promise<GeolocationPosition>((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, {enableHighAccuracy:true, timeout:10000, maximumAge:0}));
   const base: Location = {displayName:"", latitude:pos.coords.latitude, longitude:pos.coords.longitude, source:"gps", timezone:Intl.DateTimeFormat().resolvedOptions().timeZone};
@@ -25,5 +25,5 @@ export async function browserLocation(language: "en" | "ar", searchEnabled: bool
       base.countryCode = countryCode(r.locations[0]?.countryCode);
     } catch { /* GPS origin remains usable if reverse geocoding is unavailable. */ }
   }
-  return base;
+  return {...base,accuracyMeters:pos.coords.accuracy,capturedAt:pos.timestamp || Date.now()};
 }

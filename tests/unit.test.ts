@@ -17,6 +17,14 @@ import { planSchema } from "../shared/schema";
 import type { Candidate, Plan } from "../shared/types";
 const p: Plan = { ...defaultPlan(), mode: "arrive_by", safetyBufferMinutes: 10, date: "2026-10-06", time: "09:00" };
 const now = localInstant(p.date, "04:00", p.timezone);
+it("preserves provider seconds and distinguishes partial segment coverage from full coverage",()=>{
+  const at="2026-10-07T05:00:00Z";
+  const c=normalizeMapbox({duration:75,distance:900,legs:[{annotation:{congestion:["low","unknown","severe"]}}]},at);
+  expect(c.durationSeconds).toBe(75);expect(c.arrivalAt).toBe("2026-10-07T05:01:15.000Z");
+  expect(c.trafficCoverage).toBe("partial");expect(c.trafficSegments).toEqual({known:2,total:3});
+  expect(normalizeMapbox({duration:75,distance:900,legs:[{annotation:{congestion:["low","moderate"]}}]},at).trafficCoverage).toBe("available");
+  for(const duration of [NaN,Infinity,0,-1]) expect(()=>normalizeMapbox({duration,distance:1},at)).toThrow();
+});
 it("allows provider search results with long opaque place IDs to be planned", () => {
   const [origin] = normalizeGeoapify({features: [{properties: {
     place_id: "a".repeat(2048), formatted: "Public Amman landmark",

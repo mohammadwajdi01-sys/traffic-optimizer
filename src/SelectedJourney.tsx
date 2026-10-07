@@ -3,8 +3,8 @@ import { clock, localDate, dateLabel } from "../shared/time";
 import { navUrl } from "./api";
 import { en, ar } from "./i18n";
 
-export function SelectedJourney({ candidate, plan, locale, outsideWindow = false }: {
-  candidate: Candidate; plan: Plan; locale: "en" | "ar"; outsideWindow?: boolean;
+export function SelectedJourney({ candidate, plan, locale, outsideWindow = false, navigation="ask" }: {
+  candidate: Candidate; plan: Plan; locale: "en" | "ar"; outsideWindow?: boolean; navigation?:"ask"|"google"|"waze";
 }) {
   const t = locale === "ar" ? ar : en;
   return <section className="selected-journey" aria-label={t.selected} aria-live="polite">
@@ -18,8 +18,8 @@ export function SelectedJourney({ candidate, plan, locale, outsideWindow = false
     {outsideWindow && <p role="status">{t.nowOutsideWindow}</p>}
     {Date.parse(candidate.departureAt) < Date.now() - 120000 && <p role="status">{t.departurePassed}</p>}
     <div className="navigation-row">
-      <a href={navUrl("google", plan.origin, plan.destination)} target="_blank" rel="noopener noreferrer">{t.google}</a>
-      <a href={navUrl("waze", plan.origin, plan.destination)} target="_blank" rel="noopener noreferrer">{t.waze}</a>
+      <a className={navigation==="google"?"preferred":undefined} href={navUrl("google", plan.origin, plan.destination)} target="_blank" rel="noopener noreferrer">{t.google}</a>
+      <a className={navigation==="waze"?"preferred":undefined} href={navUrl("waze", plan.origin, plan.destination)} target="_blank" rel="noopener noreferrer">{t.waze}</a>
     </div>
     <p className="micro-copy">{t.navigateTimeHelp} {t.navigationNowHelp}</p>
   </section>;

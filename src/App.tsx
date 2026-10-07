@@ -48,9 +48,13 @@ import {
 import { api, ApiFailure, configureAuth, navUrl, supabase } from "./api";
 import { useStore } from "./store";
 import { en, ar, forecastWarning } from "./i18n";
-import { weeklyPlans } from "../shared/planning";
+import { liveWindow, weeklyPlans } from "../shared/planning";
 import { isArrival, isWindowPlan, migratePlan, recurringPlan } from "../shared/windows";
-import { ForecastTimeline } from "./ForecastTimeline";
+import { ResultPanel } from "./ResultPanel";
+import { TodayView } from "./TodayView";
+import { SavedRouteSelector } from "./SavedRouteSelector";
+import { initialJourney, rerankAnalysis, recommendationAllowed } from "../shared/journey-options";
+import { useSearchLocation } from "./search-location";
 import GuestAccess from "./GuestAccess";
 import SignInDialog from "./SignInDialog";
 import { LocationField } from "./LocationField";
@@ -58,7 +62,7 @@ import { SearchRegion } from "./SearchRegion";
 import { MapPreview } from "./MapPreview";
 import { nextSavedPlan } from "../shared/saved-route";
 import { SelectedJourney } from "./SelectedJourney";
-import { Button, Empty, Modal, Notice, displayFailure } from "./feedback";
+import { Button, FieldError, Modal, Notice, displayFailure } from "./feedback";
 import { broadcastWebsiteLock } from "./private-session";
 const setupConfig: AppConfig = {
   mode: "setup",
@@ -109,7 +113,7 @@ export default function App() {
       setLocale,
     } = useStore(),
     t = locale === "ar" ? ar : en;
-  const [page, setPage] = useState(location.pathname.slice(1) || "today"),
+  const [page, setPage] = useState(location.pathname === "/results" ? "plan" : location.pathname.slice(1) || "today"),
     [origin, setOrigin] = useState<Location | null>(null),
     [destination, setDestination] = useState<Location | null>(null),
     [busy, setBusy] = useState(false),
@@ -156,6 +160,8 @@ export default function App() {
   });
   const mode = form.watch("mode");
   const requestVersion = useRef(0);
+  const requestController = useRef<AbortController | null>(null);
+  const mapPanel = useRef<HTMLDivElement>(null);
   const forecastInFlight = useRef(false);
   const restoredOwner = useRef<string | null>(null);
   const accountRef = useRef(user);
@@ -176,13 +182,23 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [guestExpiresAt]);
   useEffect(() => {
-    const subscription = form.watch(() => {
-      requestVersion.current++;
-      setAnalysis(null); setSelected(null); setInstant(null); setWeekly([]);
+    const subscription = form.watch((values, info) => {
+      if (info.name === "goal") {
+        const current = useStore.getState(); setPlan({...current.plan,goal:values.goal});
+        if (current.analysis) {const ranked=rerankAnalysis(current.analysis,values.goal);setAnalysis(ranked);setSelected(initialJourney(ranked));}
+        return;
+      }
+      cancelRequest(); setAnalysis(null);setSelected(null);setInstant(null);setWeekly([]);
     });
     return () => subscription.unsubscribe();
   }, [form, setAnalysis]);
+  function cancelRequest() {
+    requestVersion.current++;requestController.current?.abort();requestController.current=null;
+    forecastInFlight.current=false;setBusy(false);setWeekProgress(0);
+  }
+  useEffect(()=>()=>{requestController.current?.abort();},[]);
   const go = (path: string) => {
+    cancelRequest();if(path === "results") path="plan";
     history.pushState(null, "", path === "today" ? "/" : "/" + path);
     setPage(path);
     if (profileMenu.current) profileMenu.current.open = false;
@@ -195,7 +211,7 @@ export default function App() {
     setPrefs((p) => ({ ...p, locale }));
   }, [locale, t.app]);
   useEffect(() => {
-    const pop = () => setPage(location.pathname.slice(1) || "today"),
+    const pop = () => {cancelRequest();setPage(location.pathname === "/results" ? "plan" : location.pathname.slice(1) || "today");},
       on = () => setOnline(true),
       off = () => setOnline(false),
       install = (e: Event) => {
@@ -226,7 +242,7 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, [config]);
   useEffect(() => {
-    requestVersion.current++;
+    cancelRequest();
     if (restoredOwner.current && restoredOwner.current !== user) {
       setOrigin(null); setDestination(null);
       form.reset({...defaultPlan(), origin:{displayName:"",latitude:0,longitude:0}, destination:{displayName:"",latitude:0,longitude:0}});
@@ -301,8 +317,8 @@ export default function App() {
     setAnalysis(null);
     setSelected(null);
     setWeekly([]);
-    if (!isWindowPlan(r.plan)) setNotice(t.migratedRoute);
-    if (p.origin.source === "gps") setNotice(t.gpsRefresh);
+    setNotice([!isWindowPlan(r.plan)?t.migratedRoute:"",p.date!==r.plan.date?`${t.dateAdjusted} ${dateLabel(p.date,locale)}`:"",p.origin.source==="gps"?t.gpsRefresh:""].filter(Boolean).join(" "));
+    if(p.origin.source==="gps") useSearchLocation.getState().setContext({countryCode:useSearchLocation.getState().countryCode,source:"manual"});
     if (!stayOnPage) go("plan");
     return p;
   }
@@ -322,9 +338,10 @@ export default function App() {
     const from = restored?.origin ?? origin, to = restored?.destination ?? destination;
     if (!from || !to) {setError(t.locationMissing); return;}
     if (forecastInFlight.current) return;
-    forecastInFlight.current = true;
-    setBusy(true);
-    const version = ++requestVersion.current;
+    if(location.pathname!=="/plan")go("plan");
+    forecastInFlight.current=true;setBusy(true);
+    const controller=new AbortController();requestController.current=controller;
+    const version=++requestVersion.current;
     try {
       const actual = {
         ...p,
@@ -333,21 +350,26 @@ export default function App() {
         timezone: from.timezone ?? p.timezone,
         demo: restored?.demo ?? demo,
       };
+      const checked=planSchema.safeParse(actual);
+      if(!checked.success){applyPlanErrors(checked.error.issues);return;}
+      if(!actual.demo){try{liveWindow(actual);}catch{form.setError("date",{message:t.dateError});return;}}
       setPlan(actual);
       const a = actual.demo
         ? await optimize(actual, (time) => demoForecast(actual, time))
-        : await api<Analysis>("/api/analysis/day", actual);
+        : await api<Analysis>("/api/analysis/day", actual,undefined,controller.signal);
       if (version !== requestVersion.current) return;
-      setInstant(null);
-      setAnalysis(a);
-      setSelected(a.best ?? a.lowest);
-      go("results");
+      const ranked=rerankAnalysis(a,form.getValues("goal"));setAnalysis(ranked);setSelected(initialJourney(ranked));
     } catch (e) {
       if (version === requestVersion.current) setError(displayFailure(e, locale));
     } finally {
-      forecastInFlight.current = false;
-      setBusy(false);
+      if(requestController.current===controller){requestController.current=null;forecastInFlight.current=false;setBusy(false);}
     }
+  }
+  function applyPlanErrors(issues:{path:(string|number)[];message:string}[]){
+    for(const issue of issues){const field=issue.path[0] as keyof Plan;
+      if(field==="origin" || field==="destination")setError(t.locationMissing);
+      if(field==="timezone" || field==="safetyBufferMinutes"){const details=document.querySelector<HTMLDetailsElement>("details.advanced");if(details)details.open=true;}
+      form.setError(field,{message:field==="timezone"?t.timezoneError:["date","endDate"].includes(field)?t.dateError:field==="safetyBufferMinutes"?t.bufferError:["earliestTime","latestTime"].includes(field)?t.boundsError:t.locationMissing});}
   }
   function changeLocation(which: "from" | "to", l: Location | null) {
     if (which === "from") {
@@ -361,6 +383,8 @@ export default function App() {
     setAnalysis(null);
     setSelected(null);
     setWeekly([]);
+    if(which==="from" && l?.source==="gps" && window.matchMedia?.("(max-width:760px)").matches)
+      requestAnimationFrame(()=>mapPanel.current?.scrollIntoView({behavior:window.matchMedia("(prefers-reduced-motion:reduce)").matches?"auto":"smooth",block:"start"}));
   }
   async function saveRoute() {
     const owner = user;
@@ -434,10 +458,8 @@ export default function App() {
       setError(t.locationMissing);
       return;
     }
-    setError("");
-    setBusy(true);
-    setWeekly([]);
-    const version = ++requestVersion.current;
+    cancelRequest();const controller=new AbortController();requestController.current=controller;
+    setError("");setBusy(true);setWeekly([]);const version=++requestVersion.current;
     const list: (Analysis | null)[] = [];
     const p = {
       ...form.getValues(),
@@ -448,6 +470,7 @@ export default function App() {
     };
     setPlan(p);
     try {
+      if (!demo && !recommendationAllowed(p)) {setError(t.unvalidatedRoute);return;}
       const days = weeklyPlans(p);
       const count = days.filter(Boolean).length;
       if (!count) {
@@ -456,7 +479,7 @@ export default function App() {
       }
       if (!demo) {
         const allowance = await api<{ remaining: number }>(
-          "/api/analysis/allowance",
+          "/api/analysis/allowance",undefined,undefined,controller.signal,
         );
         if (allowance.remaining < count) {
           setError(t.weekAllowance);
@@ -477,11 +500,11 @@ export default function App() {
           list.push(
             demo
               ? await optimize(day, (time) => demoForecast(day, time))
-              : await api<Analysis>("/api/analysis/day", day),
+              : await api<Analysis>("/api/analysis/day", day,undefined,controller.signal),
           );
         } catch (e) {
-          list.push(null);
-          setError(displayFailure(e, locale));
+          if(version!==requestVersion.current)return;
+          list.push(null);setError(displayFailure(e, locale));
           if (
             e instanceof ApiFailure &&
             [401, 403, 429, 503].includes(e.status)
@@ -495,11 +518,8 @@ export default function App() {
         setWeekly([...list]);
       }
     } catch (e) {
-      setError(displayFailure(e, locale));
-    } finally {
-      setBusy(false);
-      setWeekProgress(0);
-    }
+      if(version===requestVersion.current)setError(displayFailure(e, locale));
+    } finally {if(requestController.current===controller){requestController.current=null;setBusy(false);setWeekProgress(0);}}
   }
   async function leaveNow(restored?: Plan) {
     if (forecastInFlight.current) return;
@@ -512,18 +532,19 @@ export default function App() {
     const currentPlan: Plan = {...base, origin: from, destination: to, timezone, date, endDate: date, mode: "leave_between", earliestTime: "00:00", latestTime: "23:59", safetyBufferMinutes: 0, demo: restored?.demo ?? demo};
     const checked = planSchema.safeParse(currentPlan);
     if (!checked.success) {setError(t.windowError); return;}
-    forecastInFlight.current = true; setBusy(true); setError(""); setNotice("");
-    const version = ++requestVersion.current;
+    if(location.pathname!=="/")go("today");
+    forecastInFlight.current=true;setBusy(true);setError("");setNotice("");
+    const controller=new AbortController();requestController.current=controller;const version=++requestVersion.current;
     try {
       const departure = new Date().toISOString();
       const response = currentPlan.demo
         ? {candidate: await demoForecast(currentPlan, departure), checkedAt: departure}
-        : await api<{candidate: Candidate; checkedAt: string}>("/api/analysis/live", currentPlan);
+        : await api<{candidate: Candidate; checkedAt: string}>("/api/analysis/live", currentPlan,undefined,controller.signal);
       if (version !== requestVersion.current) return;
-      setInstant({...response, plan: currentPlan}); setSelected(response.candidate); go("results");
+      setInstant({...response, plan: currentPlan});
     } catch (e) {
       if (version === requestVersion.current) setError(displayFailure(e, locale));
-    } finally {forecastInFlight.current = false; setBusy(false);}
+    } finally {if(requestController.current===controller){requestController.current=null;forecastInFlight.current=false;setBusy(false);}}
   }
   async function savePreferences() {
     if (
@@ -598,7 +619,8 @@ export default function App() {
     }
   }
   function clearProtected() {
-    requestVersion.current++;
+    cancelRequest();
+    useSearchLocation.getState().setContext({countryCode:useSearchLocation.getState().countryCode});
     setUser(null); setRole("user"); setSaved([]); setSavedFor(null); setPush(false); setTripStart(null);
     setOrigin(null); setDestination(null); setQuickRouteId(""); setInstant(null); setAnalysis(null); setSelected(null); setWeekly([]);
     restoredOwner.current = null;
@@ -652,116 +674,17 @@ export default function App() {
     { id: "routes", label: t.routes, icon: Bookmark },
   ];
 
-  const resultBody = analysis && (
-    <>
-      <div className="section-heading">
-        <div>
-          <span className="eyebrow">{demo ? t.demo : t.live}</span>
-          <h2>{t.results}</h2>
-          <p>{t.resultsHelp}</p>
-        </div>
-        <button
-          className="icon-button"
-          aria-label={t.save}
-          onClick={() => {
-            setName("");
-            setEditingId(null);
-            setReminders(false);
-            setSaveOpen(true);
-          }}
-        >
-          <Bookmark size={21} />
-        </button>
-      </div>
-      <button className="button secondary full" disabled={busy || !online || !accessReady} onClick={() => leaveNow()}>{t.leaveNow}</button>
-      <ForecastTimeline analysis={analysis} selected={selected} onSelect={setSelected} locale={locale} />
-      <RecommendationCard
-        analysis={analysis}
-        selected={selected}
-        onSelect={setSelected}
-        locale={locale}
-        t={t}
-        navigation={prefs.navigation}
-        title={t.best}
-        type="best"
-        candidate={analysis.best}
-      />
-      <RecommendationCard
-        analysis={analysis}
-        selected={selected}
-        onSelect={setSelected}
-        locale={locale}
-        t={t}
-        navigation={prefs.navigation}
-        title={analysis.lowestMetric === "congestion" ? t.lowest : t.shortest}
-        type="low"
-        candidate={analysis.lowest}
-      />
-      {isArrival(analysis.plan) && (
-        <RecommendationCard
-          analysis={analysis}
-          selected={selected}
-          onSelect={setSelected}
-          locale={locale}
-          t={t}
-          navigation={prefs.navigation}
-          title={t.safe}
-          type="late"
-          candidate={analysis.latest}
-        />
-      )}
-      {isArrival(analysis.plan) && analysis.earliest && (
-        <RecommendationCard analysis={analysis} selected={selected} onSelect={setSelected} locale={locale} t={t} navigation={prefs.navigation} title={t.boundaryStart} type="early" candidate={analysis.earliest} />
-      )}
-      <div className="avoid-card">
-        <Clock size={19} />
-        <div>
-          <h4>{t.avoid}</h4>
-          {analysis.avoid.length ? (
-            analysis.avoid.map((v) => (
-              <p key={v.start}>
-                {clock(v.start, analysis.plan.timezone, locale)} –{" "}
-                {clock(v.end, analysis.plan.timezone, locale)} · {v.peakMinutes}{" "}
-                {t.minutes}
-              </p>
-            ))
-          ) : (
-            <p>{t.noAvoid}</p>
-          )}
-        </div>
-      </div>
-      <div className="forecast-meta">
-        <span>
-          {analysis.samples.length} {t.sampled}
-        </span>
-        <span>{t.quality}</span>
-      </div>
-      <details className="notes">
-        <summary>{t.warning}</summary>
-        <p>{t.windowHelp}</p>
-        {analysis.warnings.map((w, i) => (
-          <p key={i}>{forecastWarning(w, locale)}</p>
-        ))}
-        <p>
-          {new Date(analysis.createdAt).toLocaleString(locale)} ·{" "}
-          {analysis.provider}
-        </p>
-      </details>
-      {!demo && (
-        <button
-          className="button secondary full"
-          disabled={busy}
-          onClick={() => leaveNow()}
-        >
-          <Clock size={18} />
-          {t.liveRefresh}
-        </button>
-      )}
-    </>
-  );
+  const savedSelector=<SavedRouteSelector routes={visibleSaved} value={quickRouteId} loading={routesLoading} failed={routesError} busy={busy} signedIn={Boolean(user)} authConfigured={config.authConfigured} locale={locale}
+    onSelect={route=>{try{useRoute(route,true);}catch(error){setError(displayFailure(error,locale));}}} onSignIn={()=>setAuthOpen(true)} onRetry={()=>setRoutesReload(value=>value+1)}/>;
+  const resultBody=analysis && <ResultPanel navigation={prefs.navigation} analysis={analysis} selected={selected} onSelect={setSelected} locale={locale} onSave={()=>{setName("");setEditingId(null);setReminders(false);setSaveOpen(true);}}/>;
+  const activeCandidate=page==="today"?instant?.candidate??null:selected;
+  let minTravelDate:string;
+  try{minTravelDate=localDate(Date.now(),form.getValues("timezone"));}catch{minTravelDate=localDate(Date.now(),"UTC");}
+  const endsNextDay=Boolean(form.watch("endDate") && form.watch("endDate")!==form.watch("date"));
+  const fieldError=(name:keyof Plan)=><FieldError id={`plan-${name}-error`}>{form.formState.errors[name]?.message as string|undefined}</FieldError>;
   const planner = (
     <form
-      onSubmit={page === "today" ? e => {e.preventDefault(); if (origin && destination && accessReady && !busy && online) void leaveNow(); else setError(t.locationMissing);} : form.handleSubmit(p => analyze(p), errors => setError(errors.latestTime || errors.endDate || errors.date ? t.windowError : t.locationMissing))}
+      onSubmit={page === "today" ? e => {e.preventDefault(); if (origin && destination && accessReady && !busy && online) void leaveNow(); else setError(t.locationMissing);} : form.handleSubmit(p=>analyze(p),errors=>applyPlanErrors(Object.keys(errors).map(field=>({path:[field],message:""}))))}
       className="planner-form"
     >
       <div className="section-heading">
@@ -774,15 +697,7 @@ export default function App() {
         </div>
         <SlidersHorizontal size={20} />
       </div>
-      {<section className="quick-routes" aria-label={t.quickRoutes}>
-        <label>{t.quickRoutes}<select value={quickRouteId} disabled={busy || routesLoading || visibleSaved.length === 0} onChange={e => {
-          const r = visibleSaved.find(r => r.id === e.target.value);
-          if(r) {try {useRoute(r, true);} catch(e) {setError(displayFailure(e, locale));}}
-        }}><option value="">{routesLoading ? t.loadingRoutes : t.chooseRoute}</option>{visibleSaved.map(r => <option key={r.id} value={r.id}>{r.name} · {r.plan.destination.displayName}</option>)}</select></label>
-        <Empty>{!user && visibleSaved.length === 0 ? t.savedSignInHelp : !routesLoading && !routesError && visibleSaved.length === 0 ? t.savedEmptyHelp : t.quickRoutesHelp}</Empty>
-        {!user && visibleSaved.length === 0 && config.authConfigured && <button type="button" className="button secondary" onClick={() => setAuthOpen(true)}>{t.signin}</button>}
-        {routesError && <button type="button" className="button secondary" onClick={() => setRoutesReload(v => v+1)}>{t.retryRoutes}</button>}
-      </section>}
+      {savedSelector}
       {config.publicBeta && !user && !demo && config.turnstileSiteKey && !guestReady && (
         <GuestAccess
           siteKey={config.turnstileSiteKey}
@@ -791,13 +706,13 @@ export default function App() {
           onSignIn={config.authConfigured ? () => {setError(""); setAuthOpen(true);} : undefined}
         />
       )}
-      {!demo && <SearchRegion detectedCountry={config.detectedCountry} searchEnabled={config.searchConfigured && Boolean(user || guestReady)} />}
+      {!demo && <SearchRegion detectedCountry={config.detectedCountry} searchEnabled={config.searchConfigured && Boolean(user || guestReady)} onLocation={location=>changeLocation("from",location)} />}
       <div className="locations">
         <LocationField
           label={t.from}
           value={origin}
           onChange={(l) => changeLocation("from", l)}
-          gps
+          gps gpsButton={false}
           searchEnabled={config.searchConfigured && Boolean(user || guestReady)}
         />
         <button
@@ -839,15 +754,17 @@ export default function App() {
           },
         )}
       </div>
-      <p className="micro-copy">{t.windowExplanation}</p>
+      <p className="mode-prompt">{mode==="arrive_between"?t.arrivePrompt:t.leavePrompt}</p>
       <div className="date-time">
-        <label>{t.date}<input type="date" {...form.register("date")} min={localDate(Date.now(), form.getValues("timezone"))} /></label>
-        <label>{t.endDate}<input type="date" {...form.register("endDate")} min={form.watch("date")} /></label>
+        <label>{t.date}<input type="date" {...form.register("date")} min={minTravelDate} aria-invalid={Boolean(form.formState.errors.date)} aria-describedby="plan-date-error" onChange={event=>{const overnight=endsNextDay;void form.register("date").onChange(event);if(event.target.value)form.setValue("endDate",addDays(event.target.value,overnight?1:0));}}/>{fieldError("date")}</label>
+        <label className="overnight-option"><input type="checkbox" disabled={!form.watch("date")} checked={endsNextDay} onChange={event=>form.setValue("endDate",addDays(form.getValues("date"),event.target.checked?1:0))}/>{t.endsNextDay}</label>
       </div>
       <div className="date-time">
-        <label>{mode === "arrive_between" ? t.earliestArrivalLabel : t.earliest}<input type="time" {...form.register("earliestTime")} /></label>
-        <label>{mode === "arrive_between" ? t.latestArrivalLabel : t.latest}<input type="time" {...form.register("latestTime")} /></label>
+        <label>{mode==="arrive_between"?t.earliestArrivalLabel:t.earliest}<input type="time" aria-label={mode==="arrive_between"?t.earliestArrivalLabel:t.earliest} {...form.register("earliestTime")} aria-invalid={Boolean(form.formState.errors.earliestTime)} aria-describedby="plan-earliestTime-error"/>{fieldError("earliestTime")}</label>
+        <label>{mode==="arrive_between"?t.latestArrivalLabel:t.latest}<input type="time" aria-label={mode==="arrive_between"?t.latestArrivalLabel:t.latest} {...form.register("latestTime")} aria-invalid={Boolean(form.formState.errors.latestTime)} aria-describedby="plan-latestTime-error"/>{fieldError("latestTime")}</label>
       </div>
+      <label className="goal-picker">{t.goalLabel}<select {...form.register("goal")}><option value="shortest">{t.goalShortest}</option><option value="soonest">{t.goalSoonest}</option></select></label>
+      <p className="micro-copy">{form.watch("goal")==="soonest"?t.goalSoonestHelp:t.goalShortestHelp} {analysis && t.goalsReuse}</p>
       <details className="advanced">
         <summary>
           <span>{t.advanced}</span>
@@ -861,12 +778,12 @@ export default function App() {
               type="number"
               min="0"
               max="60"
-              {...form.register("safetyBufferMinutes", { valueAsNumber: true })}
-            />
+              {...form.register("safetyBufferMinutes",{valueAsNumber:true})} aria-invalid={Boolean(form.formState.errors.safetyBufferMinutes)} aria-describedby="plan-safetyBufferMinutes-error"
+            />{fieldError("safetyBufferMinutes")}
           </label>
           <label>
             {t.timezone}
-            <input {...form.register("timezone")} />
+            <input {...form.register("timezone")} aria-invalid={Boolean(form.formState.errors.timezone)} aria-describedby="plan-timezone-error"/>{fieldError("timezone")}
           </label>
         </div>
       </details>
@@ -890,6 +807,8 @@ export default function App() {
         {busy ? t.finding : page === "today" ? t.planWindow : t.find}
       </button>
       {page !== "today" && <button type="button" className="button secondary full" disabled={busy || !online || !accessReady || !origin || !destination} onClick={() => leaveNow()}>{t.leaveNow}</button>}
+      {busy && <button type="button" className="button secondary full" onClick={()=>{cancelRequest();setNotice(t.cancelHelp);}}>{t.cancelCheck}</button>}
+      {error && <p className="micro-copy">{t.retryCheckHelp}</p>}
       <p className="micro-copy">{t.leaveNowHelp}</p>
       <p className="micro-copy">{demo ? t.demoAttribution : page === "today" ? t.todayTimingHelp : t.chooseDate}</p>
     </form>
@@ -1100,69 +1019,10 @@ export default function App() {
               </button>
             </div>
           )}
-          {(page === "today" || page === "plan" || page === "results") && (
-            <div className="planning-grid">
-              <section className="control-panel">
-                {page === "results" && (analysis || instant) ? (
-                  <>
-                    {instant && <section className="instant-forecast" aria-label={t.leaveNow}>
-                      <h2>{t.leaveNow}</h2><p>{t.leaveNowHelp}</p>
-                      <p className="micro-copy">{t.checkedAt} · {new Date(instant.checkedAt).toLocaleString(locale)}</p>
-                      <button className="button secondary full" disabled={busy || !online} onClick={() => leaveNow()}>{t.refreshNow}</button>
-                    </section>}
-                    {selected && (analysis || instant) && <SelectedJourney candidate={selected} plan={instant?.candidate === selected ? instant.plan : analysis!.plan} locale={locale} outsideWindow={Boolean(instant?.candidate === selected && analysis && !feasible(selected, analysis.plan))} />}
-                    {resultBody}
-                    <button
-                      className="button secondary full"
-                      onClick={() => go("plan")}
-                    >
-                      {t.back}
-                    </button>
-                  </>
-                ) : (
-                  planner
-                )}
-              </section>
-              <div className="map-results">
-                <MapPreview
-                  origin={origin}
-                  destination={destination}
-                  candidate={selected}
-                  googleContent={Boolean(analysis?.provider.includes("google"))}
-                  mapEnabled={
-                    config.mapConfigured && Boolean(user || guestReady)
-                  }
-                  verificationPending={
-                    config.publicBeta && !user && !guestReady
-                  }
-                />
-                {page !== "results" && analysis && (
-                  <section className="inline-summary">
-                    <Trophy size={24} />
-                    <div>
-                      <p>{t.best}</p>
-                      <h2>
-                        {analysis.best
-                          ? clock(
-                              analysis.best.departureAt,
-                              analysis.plan.timezone,
-                              locale,
-                            )
-                          : t.noFeasible}
-                      </h2>
-                    </div>
-                    <button
-                      className="button secondary"
-                      onClick={() => go("results")}
-                    >
-                      {t.details}
-                    </button>
-                  </section>
-                )}
-
-              </div>
-            </div>
-          )}
+          {(page==="today" || page==="plan") && <div className="planning-grid">
+            <section className="control-panel">{page==="today"?<TodayView navigation={prefs.navigation} instant={instant} locale={locale} busy={busy} online={online} onRefresh={()=>void leaveNow()}>{planner}</TodayView>:planner}</section>
+            <div className="map-results" ref={mapPanel}><MapPreview origin={origin} destination={destination} candidate={activeCandidate} googleContent={page==="plan" && Boolean(analysis?.provider.includes("google"))} mapEnabled={config.mapConfigured && Boolean(user||guestReady)} verificationPending={config.publicBeta && !user && !guestReady}/>{page==="plan" && resultBody}</div>
+          </div>}
           {page === "week" && (
             <>
               <div className="page-heading">
@@ -1190,6 +1050,7 @@ export default function App() {
                     : t.runWeek}
                 </button>
               </div>
+              {savedSelector}
               <div className="week-grid">
                 <section className="panel">
                   <div className="section-heading">
@@ -1278,11 +1139,9 @@ export default function App() {
                                     aria-label={`${dateLabel(addDays(plan.date, day), locale)} ${hm}: ${min === null ? t.notSampled : min + " " + t.minutes}`}
                                     onClick={() => {
                                       if (usable) {
-                                        setSelected(c!);
-                                        setAnalysis(a!);
-                                        setOrigin(a!.plan.origin);
-                                        setDestination(a!.plan.destination);
-                                        go("results");
+                                        form.reset(a!.plan);setPlan(a!.plan);setInstant(null);
+                                        setOrigin(a!.plan.origin);setDestination(a!.plan.destination);
+                                        setAnalysis(a!);setSelected(c!);go("plan");
                                       }
                                     }}
                                   >
@@ -1876,110 +1735,3 @@ function Owner({
   );
 }
 
-function RecommendationCard({
-  candidate,
-  title,
-  type,
-  analysis,
-  selected,
-  onSelect,
-  locale,
-  t,
-  navigation,
-}: {
-  candidate: Candidate | null;
-  title: string;
-  type: "best" | "low" | "late" | "early";
-  analysis: Analysis;
-  selected: Candidate | null;
-  onSelect: (c: Candidate | null) => void;
-  locale: "en" | "ar";
-  t: typeof en;
-  navigation: "ask" | "google" | "waze";
-}) {
-  const Icon = type === "best" ? Trophy : type === "low" ? Leaf : Clock;
-  return (
-    <article
-      className={
-        "result-card " +
-        type +
-        (selected?.departureAt === candidate?.departureAt ? " chosen" : "")
-      }
-    >
-      <button
-        className="result-select"
-        disabled={!candidate}
-        onClick={() => onSelect(candidate)}
-      >
-        <div className="card-title">
-          <span>
-            <Icon size={19} />
-            {title}
-          </span>
-          {type === "best" && candidate && (
-            <small className="pill">{t.recommended}</small>
-          )}
-        </div>
-        {candidate ? (
-          <>
-            <div className="time-row">
-              <strong>
-                {clock(candidate.departureAt, analysis!.plan.timezone, locale)}
-              </strong>
-              <span className="arrival">
-                {t.arrive}{" "}
-                {clock(candidate.arrivalAt, analysis!.plan.timezone, locale)}
-              </span>
-            </div>
-            <div className="drive-row">
-              <b>
-                {Math.round(candidate.durationSeconds / 60)} {t.minutes}
-              </b>
-              <span>
-                {t.drive} · {(candidate.distanceMeters / 1000).toFixed(1)} km
-              </span>
-            </div>
-          </>
-        ) : (
-          <p>{t.noFeasible}</p>
-        )}
-      </button>
-      {candidate && (
-        <div className="navigation-row">
-          <a
-            className={navigation === "google" ? "preferred" : undefined}
-            href={navUrl(
-              "google",
-              analysis.plan.origin,
-              analysis.plan.destination,
-            )}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Navigation size={15} />
-            {t.google}
-          </a>
-          <a
-            className={navigation === "waze" ? "preferred" : undefined}
-            style={navigation === "waze" ? { order: -1 } : undefined}
-            href={navUrl(
-              "waze",
-              analysis.plan.origin,
-              analysis.plan.destination,
-            )}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Route size={15} />
-            {t.waze}
-          </a>
-        </div>
-      )}
-      {candidate?.provider === "google" && (
-        <p className="google-attribution" translate="no">
-          Google Maps
-        </p>
-      )}
-    </article>
-  );
-}

@@ -1,4 +1,6 @@
+import { coreEn, coreAr } from "./core-copy";
 export const en = {
+  ...coreEn,
   invalidInput: "Check the information you entered and try again.",
   todayJourney: "Your next journey",
   todayHelp: "Choose a saved route or destination and check leaving now. For a future arrival or departure window, open Plan.",
@@ -300,6 +302,7 @@ export const en = {
   dayNames: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
 };
 export const ar: typeof en = {
+  ...coreAr,
   invalidInput: "تحقق من البيانات التي أدخلتها ثم حاول مجدداً.",
   todayJourney: "رحلتك القادمة",
   todayHelp: "اختر رحلة محفوظة أو وجهتك وتحقق من الانطلاق الآن. لتحديد فترة وصول أو انطلاق مستقبلية، افتح صفحة التخطيط.",

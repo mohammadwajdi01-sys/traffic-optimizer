@@ -240,7 +240,7 @@ describe("Sign-in recovery after a failed human check", () => {
     await waitFor(() => expect(options).toBeDefined());
     act(() => options["error-callback"]("600010"));
     const planButton=screen.getByRole("button",{name:"Plan a time window"});
-    const locationButton=screen.getByRole("button",{name:"Share location for nearby results"});
+    const locationButton=screen.getByRole("button",{name:"Use current location"});
     const card = screen.getByRole("region", {name: /Complete the human verification/});
     await userEvent.setup().click(within(card).getByRole("button", {name:"Sign in"}));
     expect(await screen.findByRole("dialog",{name:"Sign in"})).toBeTruthy();
@@ -322,7 +322,7 @@ describe("Application interactions without service credentials", () => {
       Date.parse(a!.plan.date + "T07:00:00Z"),
     );
     expect(a!.samples.every((c) => c.provider === "demo")).toBe(true);
-    const link = within(document.querySelector(".result-card.best")!).getByRole(
+    const link = within(document.querySelector(".result-panel .selected-journey")!).getByRole(
       "link",
       { name: "Google Maps" },
     );
@@ -432,7 +432,7 @@ describe("Application interactions without service credentials", () => {
     await screen.findByRole("heading", { name: "Best times to leave" });
     expect(useStore.getState().analysis?.plan.safetyBufferMinutes).toBe(20);
     expect(
-      document.querySelector(".result-card.best a.preferred")?.textContent,
+      document.querySelector(".selected-journey a.preferred")?.textContent,
     ).toContain("Waze");
     expect(
       JSON.parse(localStorage.getItem("traffic.preferences")!).navigation,
@@ -496,6 +496,7 @@ describe("Weekly sign-in and Google login", () => {
 describe("Coordinate and whole-window regressions", () => {
   it("accepts pasted public coordinates and applies them without submitting the planner", async () => {
     const u=userEvent.setup(), change=vi.fn(), submit=vi.fn(e=>e.preventDefault());
+    useSearchLocation.getState().setContext({countryCode:"JO",source:"manual"});
     render(<form onSubmit={submit}><LocationField label="From" value={null} onChange={change} searchEnabled={false} gps /></form>);
     await u.click(screen.getByRole("combobox",{name:"From"}));
     await u.click(screen.getByRole("button",{name:"Use coordinates"}));
@@ -637,7 +638,7 @@ describe("Quick account routes and departure choices", () => {
     expect(localStorage.getItem("traffic.demoRoutes")).toBeNull();
     const a=useStore.getState().analysis!;
     const alternative=a.samples.find(c=>c.feasible && c.departureAt!==a.best?.departureAt)!;
-    await u.selectOptions(screen.getByRole("combobox",{name:"Choose a checked departure"}),alternative.departureAt);
+    await u.selectOptions(screen.getByRole("combobox",{name:"Choose a checked departure"}),`${alternative.provider}:${alternative.departureAt}`);
     expect(within(screen.getByRole("region",{name:"Selected departure"})).getByText(String(Math.round(alternative.durationSeconds/60))+" min")).toBeTruthy();
     expect(within(screen.getByRole("region",{name:"Selected departure"})).getByRole("link",{name:"Google Maps"}).getAttribute("href")).toContain("origin=31.996");
   });
@@ -676,6 +677,30 @@ describe("Quick account routes and departure choices", () => {
     await u.click(within(screen.getByRole("heading",{name:route.name}).closest("article")!).getByRole("button",{name:"Leave now"}));
     expect(screen.getByRole("combobox",{name:"From"}).getAttribute("value")).toBe("");
     expect(gps).not.toHaveBeenCalled();expect(screen.getByText(/Obtain a fresh location/)).toBeTruthy();
+  });
+  it("reranks a checked account route without another API request and ignores an edited pending request",async()=>{
+    const requests=accountFixture(),u=userEvent.setup();mount();
+    await screen.findByRole("option",{name:/Home to university/});
+    await u.selectOptions(screen.getByRole("combobox",{name:"Use a saved route"}),route.id);
+    await u.click(screen.getByRole("button",{name:"Plan a time window"}));
+    await u.click(screen.getByRole("button",{name:"Find best time"}));
+    await screen.findByRole("heading",{name:"Best times to leave"});
+    expect(location.pathname).toBe("/plan");
+    const samples=useStore.getState().analysis!.samples;
+    await u.selectOptions(screen.getByRole("combobox",{name:"What matters most?"}),"soonest");
+    expect(useStore.getState().analysis!.samples).toBe(samples);
+    expect(requests.filter(r=>r.path==="/api/analysis/day")).toHaveLength(1);
+    let finish:any,signal:AbortSignal|undefined;
+    const pending=new Promise<any>(resolve=>{finish=resolve;});const previous=globalThis.fetch;
+    vi.stubGlobal("fetch",vi.fn((path,init)=>{if(path==="/api/analysis/day"){signal=init?.signal as AbortSignal;return pending;}return previous(path,init);}));
+    await u.click(screen.getByRole("button",{name:"Find best time"}));
+    await waitFor(()=>expect(signal).toBeDefined());
+    const late=useStore.getState().analysis!;
+    await u.clear(screen.getByLabelText("Earliest arrival"));
+    expect(signal!.aborted).toBe(true);expect(useStore.getState().analysis).toBeNull();
+    await act(async()=>finish({ok:true,json:async()=>late}));
+    expect(useStore.getState().analysis).toBeNull();
+    expect(screen.queryByRole("heading",{name:"Best times to leave"})).toBeNull();
   });
 });
 

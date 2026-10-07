@@ -26,6 +26,7 @@ export function MapPreview({
     container = useRef<HTMLDivElement>(null),
     map = useRef<mapboxgl.Map | null>(null),
     [error, setError] = useState(false),
+    [attempt,setAttempt]=useState(0),
     [ready, setReady] = useState(false);
   const google = googleContent || candidate?.provider === "google";
   useEffect(() => {
@@ -55,17 +56,17 @@ export function MapPreview({
         });
         map.current = m;
         m.addControl(new lib.NavigationControl(), "top-right");
-        m.on("error", () => setError(true));
-        m.on("load", () => setReady(true));
+        m.on("error", () => {if(!cancelled)setError(true);});
+        m.on("load", () => {if(!cancelled)setReady(true);});
       })
-      .catch(() => setError(true));
+      .catch(() => {if(!cancelled)setError(true);});
     return () => {
       cancelled = true;
       map.current?.remove();
       map.current = null;
       setReady(false);
     };
-  }, [mapEnabled, demo, google]);
+  }, [mapEnabled, demo, google, attempt]);
   useEffect(() => {
     map.current?.setLanguage(locale);
   }, [locale, ready]);
@@ -146,6 +147,7 @@ export function MapPreview({
                 ? t.guestVerification
                 : t.mapHelp}
           </p>
+          {error && mapEnabled && !google && <button type="button" className="button secondary" onClick={()=>{setError(false);setReady(false);setAttempt(value=>value+1);}}>{t.mapRetry}</button>}
           <div className="journey-preview">
             <div>
               <MapPin size={18} />

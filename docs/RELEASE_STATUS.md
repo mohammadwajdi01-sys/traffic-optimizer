@@ -1,3 +1,17 @@
+# Current implementation status — 7 October 2026
+
+Batch 2 implements inline Today/Plan results, one shared saved-route selector, explicit shortest-drive/soonest-arrival goals, overnight bounds, cancellable requests, selectable sampled charts and checked-departure tables. Existing saved buffers are preserved; a migration changes only the default for new account preferences to zero.
+
+The reported Libya ETA discrepancy remains unvalidated. Known Libya routes retain inspectable estimates, but automatic daily best/latest/lowest and weekly recommendations are withheld until the matching route/time comparison is reproduced and resolved. This is not an accuracy repair or a claim that Libya has no provider coverage.
+
+Daily comparison remains adaptive and capped at 24 checks, not an exhaustive check of every minute. Partial segment annotations are reported as partial. Google Routes stays disabled and spending guards stay unchanged.
+
+The authoritative execution and acceptance records are Traffic-Optimizer-UX-Implementation-Plan-and-WBS.md and Traffic-Optimizer-Audit-WBS-2026-10-06.md. Batch 2 regression/deployment evidence and actual Android checks must be recorded before acceptance; A33 still needs the reported paired Libya case. Batch 3, reminder delivery and full V1 acceptance are pending.
+
+The original release snapshot below is historical and describes an earlier implementation.
+
+---
+
 # Release status — 2026-10-05
 
 ## Actual status

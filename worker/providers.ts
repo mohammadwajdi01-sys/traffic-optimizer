@@ -25,10 +25,11 @@ export function normalizeGeoapify(res: any): Location[] {
   })) ?? [];
 }
 export function normalizeMapbox(route: any, departureAt: string): Candidate {
-  if (!route || typeof route.duration !== "number" || route.duration <= 0)
+  if (!route || !Number.isFinite(route.duration) || route.duration <= 0 || !Number.isFinite(route.distance) || route.distance < 0)
     throw new ApiError(502, "No road route found.");
   const annotations =
     route.legs?.flatMap((l: any) => l.annotation?.congestion ?? []) ?? [];
+  const known = annotations.filter((c: string) => ["low","moderate","heavy","severe"].includes(c)).length;
   return {
     departureAt,
     arrivalAt: new Date(
@@ -39,9 +40,8 @@ export function normalizeMapbox(route: any, departureAt: string): Candidate {
     distanceMeters: route.distance,
     provider: "mapbox",
     geometry: route.geometry,
-    trafficCoverage: annotations.some((c: string) => c !== "unknown")
-      ? "available"
-      : "unknown",
+    trafficCoverage: known === annotations.length && known > 0 ? "available" : known > 0 ? "partial" : "unknown",
+    trafficSegments: {known, total:annotations.length},
   };
 }
 export function normalizeGoogle(route: any, departureAt: string): Candidate {

@@ -9,6 +9,7 @@ export type Location = {
   source?: "geoapify" | "gps" | "manual" | "demo";
 };
 export type Plan = {
+  goal?: "shortest" | "soonest";
   origin: Location;
   destination: Location;
   mode: Mode;
@@ -35,7 +36,8 @@ export type Candidate = {
   distanceMeters: number;
   provider: "mapbox" | "google" | "demo";
   geometry?: { type: "LineString"; coordinates: number[][] };
-  trafficCoverage: "available" | "unknown";
+  trafficCoverage: "available" | "partial" | "unknown";
+  trafficSegments?: { known: number; total: number };
   score?: number;
   feasible?: boolean;
 };

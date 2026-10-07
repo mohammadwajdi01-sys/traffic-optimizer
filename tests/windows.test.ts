@@ -7,11 +7,49 @@ import {weeklyPlans, liveWindow} from "../shared/planning";
 import {localInstant, iso} from "../shared/time";
 import {planSchema} from "../shared/schema";
 import type {Candidate, Plan} from "../shared/types";
+import {initialJourney, journeyOptions, rerankAnalysis, recommendationAllowed} from "../shared/journey-options";
 
 const p: Plan = {...defaultPlan(), date: "2026-10-07", earliestTime: "08:00", latestTime: "10:00"};
 const now = localInstant(p.date,"04:00",p.timezone);
 const time = (hm: string) => localInstant(p.date,hm,p.timezone);
 const forecast = (minutes = 30) => vi.fn(async (departureAt: string): Promise<Candidate> => ({departureAt,arrivalAt: iso(Date.parse(departureAt)+minutes*60000),durationSeconds: minutes*60,distanceMeters: 10000,provider: "mapbox",trafficCoverage: "unknown"}));
+
+describe("Journey goals and reliability", () => {
+  it("switches shortest drive to soonest arrival using the same checks and deterministic ties", async () => {
+    const plan={...p,mode:"leave_between" as const};
+    const f=vi.fn(async(at:string)=>({...await forecast(Date.parse(at)<time("09:00")?40:15)(at),trafficCoverage:"available" as const}));
+    const a=await optimize(plan,f,{now});
+    const calls=f.mock.calls.length;
+    expect(a.best?.departureAt).toBe(iso(time("10:00")));
+    const ranked=rerankAnalysis(a,"soonest");
+    expect(ranked.best?.departureAt).toBe(iso(time("08:00")));
+    expect(ranked.samples).toBe(a.samples);
+    expect(ranked.calls).toBe(a.calls);
+    expect(f.mock.calls).toHaveLength(calls);
+    expect(calls).toBeLessThanOrEqual(24);
+    expect(rerankAnalysis(ranked,undefined).best).toEqual(a.best);
+    expect(planSchema.safeParse(plan).success).toBe(true);
+  });
+  it("deduplicates identical alternatives and never auto-selects an infeasible low estimate", async () => {
+    const a=await optimize(p,forecast(),{now});
+    const options=journeyOptions(a);
+    expect(new Set(options.map(r=>r.candidate.provider+":"+r.candidate.departureAt)).size).toBe(options.length);
+    expect(options.some(r=>r.labels.length>1)).toBe(true);
+    const impossible={...a,plan:{...p,earliestTime:"11:00",latestTime:"12:00"},best:null};
+    expect(initialJourney(impossible)).toBeNull();
+    expect(journeyOptions(impossible)).toEqual([]);
+  });
+  it("keeps Libya samples inspectable but withholds automatic recommendations even with annotations", async () => {
+    const ly={...p,origin:{...p.origin,countryCode:"LY"}};
+    const a=await optimize(ly,async at=>({...await forecast()(at),trafficCoverage:"available"}),{now});
+    expect(a.samples.length).toBeGreaterThan(1);
+    expect(a.best).toBeNull();expect(a.latest).toBeNull();expect(a.earliest).toBeNull();expect(a.lowest).toBeNull();
+    expect(initialJourney(a)).toBeNull();expect(journeyOptions(a)).toEqual([]);
+    expect(a.warnings.join(" ")).toContain("unvalidated");
+    expect(a.warnings.join(" ")).not.toContain("No tested departure");
+    expect(recommendationAllowed({...p,timezone:"Africa/Tripoli"})).toBe(false);
+  });
+});
 
 describe("Two-mode windows", () => {
   it("derives departures before 8 for an 8–10 arrival window, including both boundaries", async () => {
