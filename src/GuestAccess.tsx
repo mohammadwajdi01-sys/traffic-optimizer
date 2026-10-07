@@ -6,10 +6,12 @@ export default function GuestAccess({
   siteKey,
   onReady,
   onError,
+  onSignIn,
 }: {
   siteKey: string;
   onReady: (expiresAt: number) => void;
   onError: (e: string) => void;
+  onSignIn?: () => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const [attempt, setAttempt] = useState(0);
@@ -213,6 +215,18 @@ export default function GuestAccess({
         <p className="micro-copy">
           {t.verificationCode}: <bdi>{code}</bdi>
         </p>
+      )}
+      {onSignIn && (
+        <div className="verification-account">
+          <p className="micro-copy">{t.verificationAccount}</p>
+          <button
+            type="button"
+            className="button primary full"
+            onClick={onSignIn}
+          >
+            {t.signin}
+          </button>
+        </div>
       )}
       <button
         type="button"

@@ -120,6 +120,26 @@ test("guest verification exposes the failure code, preserves route text, and sta
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 
+test("failed guest verification provides a visible account sign-in path without unlocking access", async ({page}) => {
+  await page.route("**/api/config",route=>route.fulfill({json:{mode:"live",authConfigured:true,googleAuthEnabled:false,supabaseUrl:"https://example.supabase.co",supabaseKey:"sb_publishable_test",searchConfigured:true,trafficConfigured:true,mapConfigured:false,publicBeta:true,turnstileSiteKey:"test-site-key",detectedCountry:"JO"}}));
+  await page.route("**/api/guest-session",route=>route.fulfill({json:{verified:false}}));
+  await page.route("https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit",route=>route.fulfill({contentType:"application/javascript",body:`window.turnstile={render:(root,options)=>{window.testVerification=options;root.textContent='Human check test fixture';return 'test-widget';},remove:()=>{}};`}));
+  await page.goto("/plan");
+  const verification=page.locator(".guest-verification");
+  await expect(verification).toContainText("Human check test fixture");
+  await page.getByRole("combobox",{name:"From",exact:true}).fill("Route preserved after sign-in");
+  await page.evaluate(()=>(window as any).testVerification["error-callback"]("600010"));
+  await expect(verification).toContainText("600010");
+  await verification.getByRole("button",{name:"Sign in",exact:true}).click();
+  await expect(page.getByRole("dialog",{name:"Sign in"})).toBeVisible();
+  await expect(page.getByRole("textbox",{name:"Email address"})).toBeVisible();
+  await page.getByRole("dialog").getByRole("button",{name:"Close",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Find best time"})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"Share location for nearby results"})).toBeDisabled();
+  await expect(page.getByRole("combobox",{name:"From",exact:true})).toHaveValue("Route preserved after sign-in");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+
 test("an existing verified guest is restored without loading a challenge and access expiry returns the check", async ({page})=>{
   let verified=true;
   await page.route("**/api/config",route=>route.fulfill({json:{mode:"live",authConfigured:false,searchConfigured:true,trafficConfigured:true,mapConfigured:false,publicBeta:true,turnstileSiteKey:"test-site-key",detectedCountry:"JO"}}));

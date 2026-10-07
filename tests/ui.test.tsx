@@ -12,6 +12,8 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "../src/App";
 import GuestAccess from "../src/GuestAccess";
+import SignInDialog from "../src/SignInDialog";
+import { configureAuth } from "../src/api";
 import {LocationField} from "../src/LocationField";
 import {SearchRegion} from "../src/SearchRegion";
 import {freshSearchPosition,useSearchLocation} from "../src/search-location";
@@ -19,14 +21,16 @@ import { useStore } from "../src/store";
 import { defaultPlan } from "../shared/demo";
 const auth = vi.hoisted(() => ({
   getSession: vi.fn(async () => ({ data: { session: null } })),
-  signInWithOAuth: vi.fn(async () => ({ error: null })),
+  signInWithOAuth: vi.fn(async (): Promise<{error: Error | null}> => ({ error: null })),
+  signInWithOtp: vi.fn(async (): Promise<{error: Error | null}> => ({ error: null })),
   onAuthStateChange: vi.fn(() => ({
     data: { subscription: { unsubscribe: vi.fn() } },
   })),
 }));
 vi.mock("@supabase/supabase-js", () => ({ createClient: () => ({ auth }) }));
 beforeEach(() => {
-  auth.signInWithOAuth.mockClear();
+  auth.signInWithOAuth.mockReset().mockResolvedValue({error: null});
+  auth.signInWithOtp.mockReset().mockResolvedValue({error: null});
   localStorage.clear();
   useSearchLocation.getState().setContext({});
   history.replaceState(null, "", "/");
@@ -201,6 +205,75 @@ function mount() {
     </QueryClientProvider>,
   );
 }
+describe("Sign-in recovery after a failed human check", () => {
+  const config = {mode: "live" as const, authConfigured: true, googleAuthEnabled: true,
+    publicBeta: true, supabaseUrl: "https://example.supabase.co", supabaseKey: "sb_publishable_test",
+    searchConfigured: true, trafficConfigured: true, mapConfigured: false};
+  function dialog() {
+    configureAuth(config);
+    return render(<SignInDialog config={config} email="route-test@example.com" onEmail={vi.fn()} onClose={vi.fn()} />);
+  }
+  it("opens account sign-in directly from a failed challenge without granting guest access", async () => {
+    let options: any;
+    vi.stubGlobal("turnstile", {render: (_r: unknown, o: any) => {options=o; return "id";},remove: vi.fn()});
+    vi.stubGlobal("fetch", vi.fn(async (url: unknown) => ({ok: true,json: async () => String(url).endsWith("/api/config") ? {...config, turnstileSiteKey: "test-site-key"} : {verified: false}})));
+    mount();
+    await waitFor(() => expect(options).toBeDefined());
+    act(() => options["error-callback"]("600010"));
+    const planButton=screen.getByRole("button",{name:"Find best time"});
+    const locationButton=screen.getByRole("button",{name:"Share location for nearby results"});
+    const card = screen.getByRole("region", {name: /Complete the human verification/});
+    await userEvent.setup().click(within(card).getByRole("button", {name:"Sign in"}));
+    expect(await screen.findByRole("dialog",{name:"Sign in"})).toBeTruthy();
+    expect(planButton.hasAttribute("disabled")).toBe(true);
+    expect(locationButton.hasAttribute("disabled")).toBe(true);
+  });
+  it("shows Google failures inside the open dialog and permits a retry", async () => {
+    auth.signInWithOAuth.mockResolvedValueOnce({error:new Error("Google sign-in request failed")});
+    dialog();
+    await userEvent.setup().click(screen.getByRole("button",{name:"Continue with Google"}));
+    const modal=screen.getByRole("dialog");
+    expect((await within(modal).findByRole("alert")).textContent).toContain("Google sign-in request failed");
+    await userEvent.setup().click(within(modal).getByRole("button",{name:"Continue with Google"}));
+    await waitFor(()=>expect(within(modal).queryByRole("alert")).toBeNull());
+    expect(auth.signInWithOAuth).toHaveBeenCalledTimes(2);
+  });
+  it("reports email failure within the dialog without claiming the link was sent", async () => {
+    auth.signInWithOtp.mockResolvedValueOnce({error:new Error("Email request rate limit reached")});
+    dialog();
+    await userEvent.setup().click(screen.getByRole("button",{name:"Email a sign-in link"}));
+    expect((await within(screen.getByRole("dialog")).findByRole("alert")).textContent).toContain("rate limit");
+    expect(screen.queryByText(/Sign-in link requested/)).toBeNull();
+  });
+  it("prevents duplicate requests and explains that a requested email link is not sign-in", async () => {
+    let release!: (v:{error:null})=>void;
+    auth.signInWithOtp.mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
+    dialog();
+    const u=userEvent.setup();
+    const submit=screen.getByRole("button",{name:"Email a sign-in link"});
+    await u.click(submit); await u.click(submit);
+    expect(auth.signInWithOtp).toHaveBeenCalledTimes(1);
+    expect(submit.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button",{name:"Continue with Google"}).hasAttribute("disabled")).toBe(true);
+    await act(async()=>release({error:null}));
+    expect((await screen.findByRole("status")).textContent).toContain("You are not signed in yet");
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+  it("discards late errors after the dialog is unmounted", async () => {
+    let release!: (v:{error:Error})=>void;
+    auth.signInWithOAuth.mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
+    const view=dialog();
+    await userEvent.setup().click(screen.getByRole("button",{name:"Continue with Google"}));
+    view.unmount(); dialog();
+    await act(async()=>release({error:new Error("Old request failed")}));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+  it("keeps email-request completion and recovery controls in Arabic", async () => {
+    useStore.getState().setLocale("ar"); dialog();
+    await userEvent.setup().click(screen.getByRole("button",{name:"أرسل رابط تسجيل الدخول"}));
+    expect((await screen.findByRole("status")).textContent).toContain("لم يتم تسجيل دخولك بعد");
+  });
+});
 describe("Application interactions without service credentials", () => {
   it("distinguishes an unreachable backend from an unconfigured service", async () => {
     vi.stubGlobal(
