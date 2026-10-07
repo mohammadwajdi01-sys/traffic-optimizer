@@ -11,6 +11,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "../src/App";
+import {MapPreview} from "../src/MapPreview";
 import GuestAccess from "../src/GuestAccess";
 import SignInDialog from "../src/SignInDialog";
 import { configureAuth } from "../src/api";
@@ -18,17 +19,28 @@ import {LocationField} from "../src/LocationField";
 import {SearchRegion} from "../src/SearchRegion";
 import {freshSearchPosition,useSearchLocation} from "../src/search-location";
 import { useStore } from "../src/store";
+import { optimize } from "../shared/optimizer";
+import { demoForecast } from "../shared/demo";
 import { defaultPlan } from "../shared/demo";
 const auth = vi.hoisted(() => ({
   getSession: vi.fn(async () => ({ data: { session: null } })),
   signInWithOAuth: vi.fn(async (): Promise<{error: Error | null}> => ({ error: null })),
   signInWithOtp: vi.fn(async (): Promise<{error: Error | null}> => ({ error: null })),
-  onAuthStateChange: vi.fn(() => ({
+  onAuthStateChange: vi.fn((_callback: any) => ({
     data: { subscription: { unsubscribe: vi.fn() } },
   })),
 }));
 vi.mock("@supabase/supabase-js", () => ({ createClient: () => ({ auth }) }));
+const mapMock = vi.hoisted(() => ({status:"unavailable",rtl:vi.fn(),create:vi.fn(),language:vi.fn(),remove:vi.fn()}));
+vi.mock("mapbox-gl",()=>({default:{
+  getRTLTextPluginStatus:()=>mapMock.status,
+  setRTLTextPlugin:(...args:any[])=>{mapMock.rtl(...args);mapMock.status="deferred";},
+  Map:class {constructor(options:any){mapMock.create(options);}addControl(){}on(){}off(){}remove(){mapMock.remove();}setLanguage(language:string){mapMock.language(language);}},
+  NavigationControl:class {},
+}}));
 beforeEach(() => {
+  auth.getSession.mockReset().mockResolvedValue({data:{session:null}});
+  auth.onAuthStateChange.mockReset().mockImplementation((_callback:any)=>({data:{subscription:{unsubscribe:vi.fn()}}}));
   auth.signInWithOAuth.mockReset().mockResolvedValue({error: null});
   auth.signInWithOtp.mockReset().mockResolvedValue({error: null});
   localStorage.clear();
@@ -583,5 +595,94 @@ describe("Location sharing and country search", () => {
     const input = JSON.parse((request.mock.calls[0] as any)[1].body);
     expect(input).toMatchObject({countryCode:"JO",latitude:31.95,longitude:35.91});
     expect(freshSearchPosition({position:{latitude:0,longitude:0,capturedAt:Date.now()-16*60000}})).toBeUndefined();
+  });
+});
+
+describe("Quick account routes and departure choices", () => {
+  const route = {id:"00000000-0000-4000-8000-000000000001", name:"Home to university", plan:{...defaultPlan(), origin:{...defaultPlan().origin,source:"manual" as const},destination:{...defaultPlan().destination,source:"manual" as const}},days:[],reminders:false};
+  function accountFixture() {
+    auth.getSession.mockResolvedValue({data:{session:{user:{email:"account-a@example.test"},access_token:"unit-only"}}} as any);
+    const requests: {path: string; body: any}[] = [];
+    vi.stubGlobal("fetch",vi.fn(async(path: string, init?: RequestInit)=>{
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      requests.push({path,body});
+      const json = path === "/api/config" ? {mode:"live",authConfigured:true,supabaseUrl:"https://example.supabase.co",supabaseKey:"unit-only",searchConfigured:false,trafficConfigured:true,mapConfigured:false,publicBeta:false}
+        : path === "/api/routes" ? [route] : path === "/api/me" ? {role:"user"}
+        : path === "/api/analysis/day" ? await optimize(body, at => demoForecast(body,at))
+        : path === "/api/analysis/live" ? {candidate:await demoForecast(body,new Date().toISOString()),checkedAt:new Date().toISOString()} : [];
+      return {ok:true,json:async()=>json};
+    }));
+    return requests;
+  }
+  it("loads database-backed route details and forecasts directly without typing locations", async()=>{
+    const requests=accountFixture(), u=userEvent.setup(); mount();
+    const picker=await screen.findByRole("combobox",{name:"Use a saved route"});
+    await screen.findByRole("option",{name:/Home to university/});
+    await u.selectOptions(picker,route.id);
+    expect(screen.getByRole("combobox",{name:"From"}).getAttribute("value")).toBe(route.plan.origin.displayName);
+    expect(screen.getByRole("combobox",{name:"To"}).getAttribute("value")).toBe(route.plan.destination.displayName);
+    await u.click(screen.getByRole("button",{name:"Find best time"}));
+    await screen.findByRole("heading",{name:"Best times to leave"});
+    expect(requests.find(r=>r.path==="/api/analysis/day")?.body).toMatchObject({origin:route.plan.origin,destination:route.plan.destination,earliestTime:route.plan.earliestTime,latestTime:route.plan.latestTime,demo:false});
+    expect(localStorage.getItem("traffic.demoRoutes")).toBeNull();
+    const a=useStore.getState().analysis!;
+    const alternative=a.samples.find(c=>c.feasible && c.departureAt!==a.best?.departureAt)!;
+    await u.selectOptions(screen.getByRole("combobox",{name:"Choose a checked departure"}),alternative.departureAt);
+    expect(within(screen.getByRole("region",{name:"Selected departure"})).getByText(String(Math.round(alternative.durationSeconds/60))+" min")).toBeTruthy();
+    expect(within(screen.getByRole("region",{name:"Selected departure"})).getByRole("link",{name:"Google Maps"}).getAttribute("href")).toContain("origin=31.996");
+  });
+  it("runs Leave now on a saved account route and preserves its stored time window",async()=>{
+    const requests=accountFixture(), u=userEvent.setup(); mount();
+    await screen.findByRole("option",{name:/Home to university/});
+    await u.click(within(document.querySelector(".sidebar")!).getByRole("link",{name:"Routes"}));
+    await u.click(within(screen.getByRole("heading",{name:route.name}).closest("article")!).getByRole("button",{name:"Leave now"}));
+    await screen.findByRole("region",{name:"Selected departure"});
+    expect(requests.filter(r=>r.path==="/api/analysis/live")).toHaveLength(1);
+    expect(requests.some(r=>r.path==="/api/analysis/day")).toBe(false);
+    expect(route.plan.earliestTime).toBe("08:00");expect(route.plan.latestTime).toBe("10:00");
+    expect(screen.getByText(/This is separate from your selected time window/)).toBeTruthy();
+  });
+  it("removes the previous account's saved route and restored addresses before another account loads",async()=>{
+    accountFixture();let changed:any;
+    auth.onAuthStateChange.mockImplementation(callback=>{changed=callback;return {data:{subscription:{unsubscribe:vi.fn()}}};});
+    const u=userEvent.setup();mount();await screen.findByRole("option",{name:/Home to university/});
+    await u.selectOptions(screen.getByRole("combobox",{name:"Use a saved route"}),route.id);
+    let finish:any;const pending=new Promise<any>(resolve=>{finish=resolve;});
+    const original=globalThis.fetch;
+    vi.stubGlobal("fetch",vi.fn((path,init)=>path==="/api/routes"?pending:original(path,init)));
+    auth.getSession.mockResolvedValue({data:{session:{user:{email:"account-b@example.test"},access_token:"unit-b"}}} as any);
+    act(()=>changed("SIGNED_IN",{user:{email:"account-b@example.test"}}));
+    expect(screen.queryByRole("option",{name:/Home to university/})).toBeNull();
+    expect(screen.getByRole("combobox",{name:"From"}).getAttribute("value")).toBe("");
+    await act(async()=>finish({ok:true,json:async()=>[]}));
+  });
+  it("never forecasts a stale saved GPS origin or requests permission automatically",async()=>{
+    accountFixture();const gpsRoute={...route,plan:{...route.plan,origin:{...route.plan.origin,source:"gps" as const}}};
+    const original=globalThis.fetch;
+    vi.stubGlobal("fetch",vi.fn(async(path,init)=>path==="/api/routes"?{ok:true,json:async()=>[gpsRoute]}:original(path,init)));
+    const gps=vi.fn();Object.defineProperty(navigator,"geolocation",{configurable:true,value:{getCurrentPosition:gps}});
+    const u=userEvent.setup();mount();await screen.findByRole("option",{name:/Home to university/});
+    await u.click(within(document.querySelector(".sidebar")!).getByRole("link",{name:"Routes"}));
+    await u.click(within(screen.getByRole("heading",{name:route.name}).closest("article")!).getByRole("button",{name:"Leave now"}));
+    expect(screen.getByRole("combobox",{name:"From"}).getAttribute("value")).toBe("");
+    expect(gps).not.toHaveBeenCalled();expect(screen.getByText(/Obtain a fresh location/)).toBeTruthy();
+  });
+});
+
+
+describe("Arabic map rendering setup",()=>{
+  it("registers RTL shaping before map creation, switches language and avoids duplicate registration",async()=>{
+    mapMock.status="unavailable";mapMock.rtl.mockClear();mapMock.create.mockClear();mapMock.language.mockClear();mapMock.remove.mockClear();
+    vi.stubGlobal("fetch",vi.fn(async()=>({ok:true,json:async()=>({token:"test-map-token"})})));
+    useStore.getState().setLocale("ar");
+    const first=render(<MapPreview origin={null} destination={null} mapEnabled/>);
+    await waitFor(()=>expect(mapMock.create).toHaveBeenCalledTimes(1));
+    expect(mapMock.rtl.mock.invocationCallOrder[0]).toBeLessThan(mapMock.create.mock.invocationCallOrder[0]);
+    expect(mapMock.create.mock.calls[0][0].language).toBe("ar");
+    act(()=>useStore.getState().setLocale("en"));expect(mapMock.language).toHaveBeenCalledWith("en");
+    first.unmount();expect(mapMock.remove).toHaveBeenCalledTimes(1);
+    render(<MapPreview origin={null} destination={null} mapEnabled/>);
+    await waitFor(()=>expect(mapMock.create).toHaveBeenCalledTimes(2));
+    expect(mapMock.rtl).toHaveBeenCalledTimes(1);
   });
 });

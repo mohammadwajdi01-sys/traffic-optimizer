@@ -1,4 +1,5 @@
 import {describe, it, expect, vi} from "vitest";
+import {nextSavedPlan} from "../shared/saved-route";
 import {defaultPlan} from "../shared/demo";
 import {optimize, feasible, summarize} from "../shared/optimizer";
 import {selectedWindow, migratePlan, recurringPlan} from "../shared/windows";
@@ -84,5 +85,23 @@ describe("Two-mode windows", () => {
     expect(migratePlan(legacy)).toMatchObject({mode:"leave_between",earliestTime:"09:00",latestTime:"11:00",origin:p.origin});
     expect(migratePlan({...p,mode:"arrive_by",time:"09:00"})).toMatchObject({mode:"arrive_between",earliestTime:"08:00",latestTime:"09:00"});
     expect(migratePlan({...p,mode:"leave_around",time:"00:30",flexibilityMinutes:60})).toMatchObject({mode:"leave_between",date:"2026-10-06",endDate:"2026-10-07",earliestTime:"23:30",latestTime:"01:30"});
+  });
+});
+
+
+describe("Saved-route occurrences", () => {
+  it("reuses today's remaining window and advances only after it ends", () => {
+    const route = {id: "saved", name: "Home", plan: p, days: [], reminders: false};
+    expect(nextSavedPlan(route, time("09:00")).date).toBe(p.date);
+    expect(nextSavedPlan(route, time("11:00")).date).toBe("2026-10-08");
+  });
+  it("respects recurring weekdays and retains saved bounds without mutating them", () => {
+    const route = {id: "saved", name: "Home", plan: p, days: [5], reminders: false};
+    expect(nextSavedPlan(route, time("09:00"))).toMatchObject({date: "2026-10-09", earliestTime: "08:00", latestTime: "10:00"});
+    expect(route.plan.date).toBe("2026-10-07");
+  });
+  it("keeps last night's still-open overnight occurrence", () => {
+    const route = {id: "saved", name: "Night", plan: {...p, mode: "leave_between" as const, endDate: "2026-10-08", earliestTime: "23:00", latestTime: "01:00"}, days: [2], reminders: false};
+    expect(nextSavedPlan(route, time("00:30"))).toMatchObject({date: "2026-10-06", endDate: "2026-10-07"});
   });
 });

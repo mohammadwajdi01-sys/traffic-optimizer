@@ -31,17 +31,27 @@ export function MapPreview({
   useEffect(() => {
     if (!mapEnabled || demo || google || !container.current) return;
     let cancelled = false;
+    setError(false);
     api<{ token: string }>("/api/map-token")
       .then(async ({ token }) => {
         if (cancelled || !container.current) return;
         const lib = (await import("mapbox-gl")).default;
         if (cancelled) return;
+        // Register once globally; Arabic shaping is needed even in an English UI.
+        if (lib.getRTLTextPluginStatus() === "unavailable") {
+          lib.setRTLTextPlugin(
+            new URL("/mapbox-rtl-text-v0.2.3.js", window.location.origin).href,
+            error => { if (error && !cancelled) setError(true); },
+            true,
+          );
+        }
         const m = new lib.Map({
           container: container.current,
           accessToken: token,
           style: "mapbox://styles/mapbox/streets-v12",
           center: [origin?.longitude ?? 35.9, origin?.latitude ?? 31.97],
           zoom: 11,
+          language: locale,
         });
         map.current = m;
         m.addControl(new lib.NavigationControl(), "top-right");
@@ -57,10 +67,14 @@ export function MapPreview({
     };
   }, [mapEnabled, demo, google]);
   useEffect(() => {
+    map.current?.setLanguage(locale);
+  }, [locale, ready]);
+  useEffect(() => {
     const m = map.current;
     if (!m || !origin || !destination) return;
     let markers: mapboxgl.Marker[] = [];
     let stopped = false;
+    let onLoad: (() => void) | undefined;
     const draw = async () => {
       const lib = (await import("mapbox-gl")).default;
       if (stopped) return;
@@ -73,6 +87,7 @@ export function MapPreview({
           .addTo(m),
       ];
       const update = () => {
+        if (stopped) return;
         if (!m.isStyleLoaded()) return;
         const source = m.getSource("trip") as
           mapboxgl.GeoJSONSource | undefined;
@@ -103,11 +118,13 @@ export function MapPreview({
         m.fitBounds(b, { padding: 65, maxZoom: 14 });
       };
       m.on("load", update);
+      onLoad = update;
       update();
     };
     draw();
     return () => {
       stopped = true;
+      if (onLoad) m.off("load", onLoad);
       markers.forEach((marker) => marker.remove());
     };
   }, [origin, destination, candidate, ready]);

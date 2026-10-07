@@ -38,7 +38,7 @@ import type {
 } from "../shared/types";
 import { defaultPlan, demoForecast, demoLocations } from "../shared/demo";
 import { planSchema } from "../shared/schema";
-import { optimize, windowFor } from "../shared/optimizer";
+import { optimize, windowFor, feasible } from "../shared/optimizer";
 import {
   addDays,
   clock,
@@ -57,6 +57,8 @@ import SignInDialog from "./SignInDialog";
 import { LocationField } from "./LocationField";
 import { SearchRegion } from "./SearchRegion";
 import { MapPreview } from "./MapPreview";
+import { nextSavedPlan } from "../shared/saved-route";
+import { SelectedJourney } from "./SelectedJourney";
 const setupConfig: AppConfig = {
   mode: "setup",
   authConfigured: false,
@@ -116,6 +118,12 @@ export default function App() {
     [days, setDays] = useState([0, 1, 2, 3, 4]),
     [reminders, setReminders] = useState(false),
     [saved, setSaved] = useState<SavedRoute[]>(safeDeviceRoutes),
+    [savedFor, setSavedFor] = useState<string | null>(null),
+    [routesLoading, setRoutesLoading] = useState(false),
+    [routesError, setRoutesError] = useState(false),
+    [routesReload, setRoutesReload] = useState(0),
+    [quickRouteId, setQuickRouteId] = useState(""),
+    [instant, setInstant] = useState<{candidate: Candidate; plan: Plan; checkedAt: string} | null>(null),
     [weekly, setWeekly] = useState<(Analysis | null)[]>([]),
     [weekProgress, setWeekProgress] = useState(0),
     [selected, setSelected] = useState<Candidate | null>(null),
@@ -145,6 +153,12 @@ export default function App() {
   });
   const mode = form.watch("mode");
   const requestVersion = useRef(0);
+  const forecastInFlight = useRef(false);
+  const restoredOwner = useRef<string | null>(null);
+  const accountRef = useRef(user);
+  accountRef.current = user;
+  const visibleSaved = savedFor === user ? saved : [];
+  const accessReady = demo || Boolean(user || guestReady);
   useEffect(() => {
     if (user) setAuthOpen(false);
   }, [user]);
@@ -161,7 +175,7 @@ export default function App() {
   useEffect(() => {
     const subscription = form.watch(() => {
       requestVersion.current++;
-      setAnalysis(null); setSelected(null); setWeekly([]);
+      setAnalysis(null); setSelected(null); setInstant(null); setWeekly([]);
     });
     return () => subscription.unsubscribe();
   }, [form, setAnalysis]);
@@ -208,29 +222,37 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, [config]);
   useEffect(() => {
+    requestVersion.current++;
+    if (restoredOwner.current && restoredOwner.current !== user) {
+      setOrigin(null); setDestination(null);
+      form.reset({...defaultPlan(), origin:{displayName:"",latitude:0,longitude:0}, destination:{displayName:"",latitude:0,longitude:0}});
+      restoredOwner.current = null;
+    }
+    setQuickRouteId(""); setInstant(null); setAnalysis(null); setSelected(null); setWeekly([]);
+  }, [user]);
+  useEffect(() => {
+    setSavedFor(user); setRoutesError(false);
     if (!user || demo) {
-      setRole("user");
-      setSaved(safeDeviceRoutes());
+      setRole("user"); setSaved(safeDeviceRoutes()); setRoutesLoading(false);
       return;
     }
     let active = true;
+    setSaved([]); setRoutesLoading(true);
     api<{ role: string }>("/api/me")
-      .then((v) => {if(active) setRole(v.role);})
-      .catch(() => {});
+      .then(v => {if(active) setRole(v.role);}).catch(() => {});
     api<SavedRoute[]>("/api/routes")
       .then(rows => {if(active) setSaved(rows);})
-      .catch((e) => setError((e as Error).message));
+      .catch(e => {if(active) {setRoutesError(true); setError((e as Error).message);}})
+      .finally(() => {if(active) setRoutesLoading(false);});
     api<any[]>("/api/preferences")
-      .then((rows) => {
+      .then(rows => {
         if (active && rows[0]) {
-          setPrefs(rows[0]);
-          setLocale(rows[0].locale);
-          form.setValue("safetyBufferMinutes", rows[0].safety_buffer);
+          setPrefs(rows[0]); setLocale(rows[0].locale);
+          if (!restoredOwner.current) form.setValue("safetyBufferMinutes", rows[0].safety_buffer);
         }
-      })
-      .catch(() => {});
+      }).catch(() => {});
     return () => {active = false;};
-  }, [user, demo]);
+  }, [user, demo, routesReload]);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(""), 6000);
@@ -262,10 +284,12 @@ export default function App() {
     go("plan");
   }
   function useRoute(r: SavedRoute) {
+    const p = nextSavedPlan(r);
     setEditingId(null);
     const isExample = r.plan.origin.source === "demo";
     setDemo(isExample);
-    const p = recurringPlan(r.plan, localDate(Date.now() + 86400000, r.plan.timezone));
+    setQuickRouteId(r.id);
+    restoredOwner.current = isExample ? null : user;
     setOrigin(p.origin.source === "gps" ? null : p.origin);
     setDestination(p.destination);
     form.reset(p);
@@ -276,35 +300,48 @@ export default function App() {
     if (!isWindowPlan(r.plan)) setNotice(t.migratedRoute);
     if (p.origin.source === "gps") setNotice(t.gpsRefresh);
     go("plan");
+    return p;
   }
-  async function analyze(p: Plan) {
+  async function runSaved(r: SavedRoute, now = false) {
+    if (forecastInFlight.current) return;
+    try {
+      const p = useRoute(r);
+      if (p.origin.source === "gps") return;
+      const route = {...p, demo: p.origin.source === "demo"};
+      if (now) await leaveNow(route);
+      else await analyze(route, route);
+    } catch (e) {setError((e as Error).message);}
+  }
+  async function analyze(p: Plan, restored?: Plan) {
     setError("");
     setNotice("");
-    if (!origin || !destination) {
-      setError(t.locationMissing);
-      return;
-    }
+    const from = restored?.origin ?? origin, to = restored?.destination ?? destination;
+    if (!from || !to) {setError(t.locationMissing); return;}
+    if (forecastInFlight.current) return;
+    forecastInFlight.current = true;
     setBusy(true);
     const version = ++requestVersion.current;
     try {
       const actual = {
         ...p,
-        origin,
-        destination,
-        timezone: origin.timezone ?? p.timezone,
-        demo,
+        origin: from,
+        destination: to,
+        timezone: from.timezone ?? p.timezone,
+        demo: restored?.demo ?? demo,
       };
       setPlan(actual);
-      const a = demo
+      const a = actual.demo
         ? await optimize(actual, (time) => demoForecast(actual, time))
         : await api<Analysis>("/api/analysis/day", actual);
       if (version !== requestVersion.current) return;
+      setInstant(null);
       setAnalysis(a);
       setSelected(a.best ?? a.lowest);
       go("results");
     } catch (e) {
-      setError(locale === "ar" ? t.error : (e as Error).message);
+      if (version === requestVersion.current) setError(locale === "ar" ? t.error : (e as Error).message);
     } finally {
+      forecastInFlight.current = false;
       setBusy(false);
     }
   }
@@ -322,6 +359,7 @@ export default function App() {
     setWeekly([]);
   }
   async function saveRoute() {
+    const owner = user;
     setError("");
     const p = analysis?.plan ?? form.getValues();
     if (!origin || !destination || !name.trim()) {
@@ -354,7 +392,9 @@ export default function App() {
           return;
         }
         await api(editingId ? "/api/routes/" + editingId : "/api/routes", r, editingId ? "PATCH" : "POST");
-        setSaved(await api<SavedRoute[]>("/api/routes"));
+        const rows = await api<SavedRoute[]>("/api/routes");
+        if (accountRef.current !== owner) return;
+        setSaved(rows);
       }
       setSaveOpen(false);
       setNotice(t.saved);
@@ -363,6 +403,7 @@ export default function App() {
     }
   }
   async function deleteRoute(r: SavedRoute) {
+    const owner = user;
     if (!window.confirm(t.confirmDelete)) return;
     try {
       if (r.plan.origin.source === "demo") {
@@ -371,7 +412,9 @@ export default function App() {
         setSaved(next);
       } else {
         await api("/api/routes/" + r.id, undefined, "DELETE");
-        setSaved(await api<SavedRoute[]>("/api/routes"));
+        const rows = await api<SavedRoute[]>("/api/routes");
+        if (accountRef.current !== owner) return;
+        setSaved(rows);
       }
     } catch (e) {
       setError((e as Error).message);
@@ -454,22 +497,29 @@ export default function App() {
       setWeekProgress(0);
     }
   }
-  async function liveRefresh() {
-    if (!analysis || demo) return;
-    setBusy(true);
+  async function leaveNow(restored?: Plan) {
+    if (forecastInFlight.current) return;
+    const from = restored?.origin ?? origin, to = restored?.destination ?? destination;
+    if (!from || !to) {setError(t.locationMissing); return;}
+    const base = restored ?? form.getValues();
+    const timezone = from.timezone ?? base.timezone;
+    const date = localDate(Date.now(), timezone);
+    // Only the locations matter for a current estimate; leave the saved/form bounds intact.
+    const currentPlan: Plan = {...base, origin: from, destination: to, timezone, date, endDate: date, mode: "leave_between", earliestTime: "00:00", latestTime: "23:59", safetyBufferMinutes: 0, demo: restored?.demo ?? demo};
+    const checked = planSchema.safeParse(currentPlan);
+    if (!checked.success) {setError(t.windowError); return;}
+    forecastInFlight.current = true; setBusy(true); setError(""); setNotice("");
+    const version = ++requestVersion.current;
     try {
-      const { candidate } = await api<{ candidate: Candidate }>(
-        "/api/analysis/live",
-        analysis.plan,
-      );
-      setNotice(
-        `${t.refreshHelp}: ${Math.round(candidate.durationSeconds / 60)} ${t.minutes}`,
-      );
+      const departure = new Date().toISOString();
+      const response = currentPlan.demo
+        ? {candidate: await demoForecast(currentPlan, departure), checkedAt: departure}
+        : await api<{candidate: Candidate; checkedAt: string}>("/api/analysis/live", currentPlan);
+      if (version !== requestVersion.current) return;
+      setInstant({...response, plan: currentPlan}); setSelected(response.candidate); go("results");
     } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+      if (version === requestVersion.current) setError(locale === "ar" ? t.error : (e as Error).message);
+    } finally {forecastInFlight.current = false; setBusy(false);}
   }
   async function savePreferences() {
     if (
@@ -544,7 +594,7 @@ export default function App() {
     }
   }
   function exportRoutes() {
-    const blob = new Blob([JSON.stringify(saved, null, 2)], {
+    const blob = new Blob([JSON.stringify(visibleSaved, null, 2)], {
         type: "application/json",
       }),
       url = URL.createObjectURL(blob),
@@ -583,6 +633,7 @@ export default function App() {
           <Bookmark size={21} />
         </button>
       </div>
+      <button className="button secondary full" disabled={busy || !online || !accessReady} onClick={() => leaveNow()}>{t.leaveNow}</button>
       <ForecastTimeline analysis={analysis} selected={selected} onSelect={setSelected} locale={locale} />
       <RecommendationCard
         analysis={analysis}
@@ -660,7 +711,7 @@ export default function App() {
         <button
           className="button secondary full"
           disabled={busy}
-          onClick={liveRefresh}
+          onClick={() => leaveNow()}
         >
           <Clock size={18} />
           {t.liveRefresh}
@@ -670,9 +721,17 @@ export default function App() {
   );
   const planner = (
     <form
-      onSubmit={form.handleSubmit(analyze, errors => setError(errors.latestTime || errors.endDate || errors.date ? t.windowError : t.locationMissing))}
+      onSubmit={form.handleSubmit(p => analyze(p), errors => setError(errors.latestTime || errors.endDate || errors.date ? t.windowError : t.locationMissing))}
       className="planner-form"
     >
+      {(user || visibleSaved.length > 0) && <section className="quick-routes" aria-label={t.quickRoutes}>
+        <label>{t.quickRoutes}<select value={quickRouteId} disabled={busy || routesLoading} onChange={e => {
+          const r = visibleSaved.find(r => r.id === e.target.value);
+          if(r) {try {useRoute(r);} catch(e) {setError((e as Error).message);}}
+        }}><option value="">{routesLoading ? t.loadingRoutes : t.chooseRoute}</option>{visibleSaved.map(r => <option key={r.id} value={r.id}>{r.name} · {r.plan.destination.displayName}</option>)}</select></label>
+        <p className="micro-copy">{t.quickRoutesHelp}</p>
+        {routesError && <button type="button" className="button secondary" onClick={() => setRoutesReload(v => v+1)}>{t.retryRoutes}</button>}
+      </section>}
       <div className="section-heading">
         <div>
           <span className="eyebrow">{t.ready}</span>
@@ -786,6 +845,8 @@ export default function App() {
         )}{" "}
         {busy ? t.finding : t.find}
       </button>
+      <button type="button" className="button secondary full" disabled={busy || !online || !accessReady || !origin || !destination} onClick={() => leaveNow()}>{t.leaveNow}</button>
+      <p className="micro-copy">{t.leaveNowHelp}</p>
       <p className="micro-copy">{demo ? t.demoAttribution : t.chooseDate}</p>
     </form>
   );
@@ -1012,8 +1073,14 @@ export default function App() {
           {(page === "today" || page === "plan" || page === "results") && (
             <div className="planning-grid">
               <section className="control-panel">
-                {page === "results" && analysis ? (
+                {page === "results" && (analysis || instant) ? (
                   <>
+                    {instant && <section className="instant-forecast" aria-label={t.leaveNow}>
+                      <h2>{t.leaveNow}</h2><p>{t.leaveNowHelp}</p>
+                      <p className="micro-copy">{t.checkedAt} · {new Date(instant.checkedAt).toLocaleString(locale)}</p>
+                      <button className="button secondary full" disabled={busy || !online} onClick={() => leaveNow()}>{t.refreshNow}</button>
+                    </section>}
+                    {selected && (analysis || instant) && <SelectedJourney candidate={selected} plan={instant?.candidate === selected ? instant.plan : analysis!.plan} locale={locale} outsideWindow={Boolean(instant?.candidate === selected && analysis && !feasible(selected, analysis.plan))} />}
                     {resultBody}
                     <button
                       className="button secondary full"
@@ -1278,7 +1345,7 @@ export default function App() {
               <div className="page-heading">
                 <div>
                   <span className="eyebrow">
-                    {saved.length} {t.count}
+                    {visibleSaved.length} {t.count}
                   </span>
                   <h1>{t.routeTitle}</h1>
                   <p>{t.routeHelp}</p>
@@ -1288,8 +1355,10 @@ export default function App() {
                   {t.newRoute}
                 </button>
               </div>
+              {routesLoading && <p role="status">{t.loadingRoutes}</p>}
+              {routesError && <button className="button secondary" onClick={() => setRoutesReload(v=>v+1)}>{t.retryRoutes}</button>}
               <div className="routes-grid">
-                {saved.map((r) => (
+                {visibleSaved.map((r) => (
                   <article className="saved-route panel" key={r.id}>
                     <div className="saved-route-head">
                       <span className="route-icon">
@@ -1326,13 +1395,15 @@ export default function App() {
                     }}>{t.edit}</button>
                     <button
                       className="button secondary full"
-                      onClick={() => useRoute(r)}
+                      disabled={busy || !online || (r.plan.origin.source !== "demo" && !user)}
+                      onClick={() => runSaved(r)}
                     >
                       {t.use}
                     </button>
+                    <button className="button secondary full" disabled={busy || !online || (r.plan.origin.source !== "demo" && !user)} onClick={() => runSaved(r, true)}>{t.leaveNow}</button>
                   </article>
                 ))}
-                {!saved.length && (
+                {!visibleSaved.length && !routesLoading && !routesError && (
                   <div className="panel empty-state">
                     <Bookmark size={40} />
                     <p>{t.noRoutes}</p>
