@@ -162,10 +162,12 @@ async function api(request: Request, env: Env) {
       env,
       p,
       who.role === "admin" || who.role === "family",
+      path.endsWith("live"),
     );
     if (path.endsWith("live"))
       return reply({
-        candidate: await forecast(new Date(Date.now() + 60000).toISOString()),
+        candidate: await forecast(new Date().toISOString()),
+        checkedAt: new Date().toISOString(),
       });
     let providerError: unknown;
     const checkedForecast = async (time: string) => {

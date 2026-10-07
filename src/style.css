@@ -1794,3 +1794,12 @@ input[type="range"] {
 }
 
 .verification-account { margin-block: 12px; }
+
+.quick-routes, .selected-journey, .instant-forecast { padding: 16px; border: 1px solid var(--border, #dce4ef); border-radius: 14px; margin-block: 12px; background: #f6f9ff; min-width: 0; }
+.quick-routes select { width: 100%; min-width: 0; }
+.selected-journey dl { display: grid; gap: 10px; }
+.selected-journey dl div { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.selected-journey dd { margin: 0; font-weight: 600; }
+.selected-journey .navigation-row { flex-wrap: wrap; }
+.saved-route .button { margin-top: 8px; }
+.map-canvas { direction: ltr; }

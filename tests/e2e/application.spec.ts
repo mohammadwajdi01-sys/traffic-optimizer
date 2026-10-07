@@ -155,3 +155,26 @@ test("an existing verified guest is restored without loading a challenge and acc
   await expect(page.getByRole("button",{name:"Share location for nearby results"})).toBeDisabled();
   expect(widgetLoads).toBe(1);
 });
+
+test("reuses a saved route, checks Leave now and selects a listed departure on small screens", async({page})=>{
+  await page.goto("/");
+  await page.getByRole("button",{name:"Try an example",exact:true}).click();
+  await page.getByRole("button",{name:"Find best time",exact:true}).click();
+  await page.getByRole("button",{name:"Save route",exact:true}).click();
+  await page.getByLabel("Route name").fill("Fast commute");
+  await page.getByRole("dialog").getByRole("button",{name:"Save route",exact:true}).click();
+  await page.locator("nav").getByRole("link",{name:"Routes",exact:true}).filter({visible:true}).first().click();
+  const card=page.locator("article.saved-route").filter({hasText:"Fast commute"});
+  await card.getByRole("button",{name:"Compare departures",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Best times to leave",exact:true})).toBeVisible();
+  const choices=page.getByRole("combobox",{name:"Choose a checked departure"});
+  const value=await choices.locator("option:not([disabled])").first().getAttribute("value");
+  await choices.selectOption(value!);
+  await expect(page.getByRole("region",{name:"Selected departure"})).toContainText("Google Maps");
+  await page.getByRole("button",{name:"Leave now",exact:true}).click();
+  await expect(page.getByRole("region",{name:"Leave now",exact:true})).toBeVisible();
+  await expect(page.getByRole("region",{name:"Selected departure"})).toContainText("min");
+  await page.getByRole("button",{name:"ع",exact:true}).click();
+  await expect(page.getByRole("region",{name:"وقت الانطلاق المحدد"})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});

@@ -8,10 +8,11 @@ writeFileSync(
     export class TestProvider extends WorkerEntrypoint {
       async fetch(request) {
         try {
-          if (new URL(request.url).pathname === '/forecast') {
+          if (['/forecast','/forecast-live'].includes(new URL(request.url).pathname)) {
             const p = await request.json();
-            const forecast = await createForecast(this.env, p, false);
-            return Response.json(await forecast('2026-10-07T05:30:00.000Z'));
+            const immediate = new URL(request.url).pathname === '/forecast-live';
+            const forecast = await createForecast(this.env, p, false, immediate);
+            return Response.json(await forecast(immediate ? new Date().toISOString() : '2026-10-07T05:30:00.000Z'));
           }
           return Response.json(await remote('https://upstream.test'+new URL(request.url).pathname, {headers:{Authorization:'Bearer private-test-value'}}));
         }
@@ -61,7 +62,8 @@ const mf = new Miniflare(
         },
         outboundService: (request) => {
           if (new URL(request.url).hostname === "api.mapbox.com") {
-            assert.equal(new URL(request.url).searchParams.get("depart_at"), "2026-10-07T05:30:00Z");
+            assert.ok(["now", "2026-10-07T05:30:00Z"].includes(new URL(request.url).searchParams.get("depart_at")));
+            upstreamRequests.push(new URL(request.url).searchParams.get("depart_at"));
             return Response.json({routes:[{duration:1200,distance:15000,legs:[]}]});
           }
           if (new URL(request.url).hostname === "account.test") return Response.json(new URL(request.url).pathname.startsWith("/auth") ? {id:"test-location-user"} : [{role:"user"}]);
@@ -111,6 +113,14 @@ try {
   });
   assert.equal(forecast.status, 200);
   assert.equal((await forecast.json()).durationSeconds, 1200);
+  const immediate = await bindings.PROVIDER_CHECK.fetch("https://check/forecast-live", {
+    method:"POST",body:JSON.stringify({origin:{latitude:31.95,longitude:35.91,countryCode:"JO"},destination:{latitude:32,longitude:35.83}}),
+  });
+  assert.equal(immediate.status,200);
+  const immediateCandidate = await immediate.json();
+  assert.ok(Math.abs(Date.parse(immediateCandidate.departureAt)-Date.now())<10000);
+  assert.equal(Date.parse(immediateCandidate.arrivalAt)-Date.parse(immediateCandidate.departureAt),1200000);
+  assert.deepEqual(upstreamRequests.slice(-2),["2026-10-07T05:30:00Z","now"]);
   const ns = await mf.getDurableObjectNamespace("BUDGET", "traffic"),
     stub = ns.get(ns.idFromName("test"));
   async function call(path, body = {}) {

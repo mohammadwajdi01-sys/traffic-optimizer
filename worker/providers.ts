@@ -62,7 +62,7 @@ export function normalizeGoogle(route: any, departureAt: string): Candidate {
     trafficCoverage: "unknown",
   };
 }
-async function mapbox(env: Env, p: Plan, departureAt: string) {
+async function mapbox(env: Env, p: Plan, departureAt: string, immediate = false) {
   if (!env.MAPBOX_SERVER_TOKEN)
     throw new ApiError(503, "Traffic forecasting is not configured yet.");
   await budget(env, "/reserve", { provider: "mapbox" });
@@ -70,7 +70,7 @@ async function mapbox(env: Env, p: Plan, departureAt: string) {
   const q = new URLSearchParams({
     access_token: env.MAPBOX_SERVER_TOKEN,
     // Mapbox accepts whole seconds, unlike JavaScript ISO strings with milliseconds.
-    depart_at: new Date(departureAt).toISOString().replace(/\.\d{3}Z$/, "Z"),
+    depart_at: immediate ? "now" : new Date(departureAt).toISOString().replace(/\.\d{3}Z$/, "Z"),
     geometries: "geojson",
     overview: "full",
     annotations: "congestion",
@@ -113,6 +113,7 @@ export async function createForecast(
   env: Env,
   p: Plan,
   allowFallback: boolean,
+  immediate = false,
 ) {
   const config = await budget(env, "/config");
   let provider = config.countries[p.origin.countryCode ?? ""] ?? "mapbox";
@@ -122,7 +123,7 @@ export async function createForecast(
     try {
       return provider === "google"
         ? await google(env, p, time)
-        : await mapbox(env, p, time);
+        : await mapbox(env, p, time, immediate);
     } catch (e) {
       if (
         provider === "mapbox" &&
