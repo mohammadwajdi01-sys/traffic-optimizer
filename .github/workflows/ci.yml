@@ -17,7 +17,17 @@ jobs:
       - run: npx wrangler dev --env verification --port 8787 > /tmp/traffic-server.log 2>&1 &
         env:
           WRANGLER_SEND_METRICS: false
+      - run: node scripts/private-fixture.mjs
+      - run: npx wrangler dev --env privatecheck --port 8788 > /tmp/traffic-private-server.log 2>&1 &
+        env:
+          WRANGLER_SEND_METRICS: false
       - run: |
+          private_ready=false
+          for attempt in $(seq 1 60); do
+            if [ "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8788/plan)" = "401" ]; then private_ready=true; break; fi
+            sleep 1
+          done
+          if [ "$private_ready" != true ]; then cat /tmp/traffic-private-server.log; exit 1; fi
           ready=false
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:8787/api/health; then ready=true; break; fi
@@ -27,3 +37,4 @@ jobs:
           npm run test:e2e
         env:
           TEST_BASE_URL: http://127.0.0.1:8787
+          PRIVATE_TEST_BASE_URL: http://127.0.0.1:8788

@@ -8,6 +8,7 @@ import { createForecast, normalizeGeoapify, remote } from "./providers";
 import { scheduledReminders } from "./notifications";
 import { createGuestSession, verifyGuestSession } from "./guest";
 import { countryCode, locationQuery, locationSearchSchema } from "../shared/location-search";
+import { privateAccess, privateResponse } from "./private-access";
 export { BudgetLedger } from "./budget";
 const security = {
   "Cache-Control": "no-store",
@@ -68,6 +69,7 @@ async function api(request: Request, env: Env) {
       turnstileSiteKey: env.TURNSTILE_SITE_KEY,
       vapidPublicKey: env.VAPID_PUBLIC_KEY,
       publicBeta: env.PUBLIC_BETA === "true",
+      privateAccess: env.PRIVATE_ACCESS_REQUIRED === "true",
       detectedCountry: countryCode(request.cf?.country),
     });
   if (path === "/api/health" && request.method === "GET")
@@ -382,11 +384,13 @@ async function api(request: Request, env: Env) {
 }
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    const privateGate = await privateAccess(request, env);
+    if (privateGate) return privateGate;
     if (!new URL(request.url).pathname.startsWith("/api/"))
-      return env.ASSETS.fetch(request);
+      return privateResponse(await env.ASSETS.fetch(request), env);
     const requestId = crypto.randomUUID();
     try {
-      return await api(request, env);
+      return privateResponse(await api(request, env), env);
     } catch (e) {
       const status =
         e instanceof ApiError ? e.status : e instanceof z.ZodError ? 400 : 500;

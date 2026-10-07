@@ -34,6 +34,10 @@ export async function api<T>(
     signal,
   });
   const json = (await res.json()) as any;
+  if (res.status === 401 && json.privateAccess && typeof window !== "undefined") {
+    window.location.reload();
+    throw new ApiFailure(401, json.error);
+  }
   if (res.status === 401 && !data.session && typeof window !== "undefined")
     window.dispatchEvent(new Event("traffic-guest-expired"));
   if (!res.ok)

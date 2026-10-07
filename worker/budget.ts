@@ -142,6 +142,12 @@ export class BudgetLedger extends DurableObject<Env> {
         await tx.put(key, used + 1);
         return reply({ used: used + 1, limit });
       }
+      if (path === "/private-rate") {
+        const key = `private:${Math.floor(minute / 10)}:${data.user}`, used = (await tx.get<number>(key)) ?? 0;
+        if (used >= 5) return reply({error: "Wait ten minutes before trying again."}, 429);
+        await tx.put(key, used + 1);
+        return reply({ok: true});
+      }
       if (path === "/rate") {
         const key = `r:${minute}:${data.user}`,
           used = (await tx.get<number>(key)) ?? 0;
@@ -198,6 +204,7 @@ export class BudgetLedger extends DurableObject<Env> {
         const all = await tx.list();
         const old: string[] = [];
         for (const [k, v] of all) {
+          if (k.startsWith("private:") && Number(k.split(":")[1]) < Math.floor(minute / 10)) old.push(k);
           if (
             (k.startsWith("r:") || k.startsWith("pr:")) &&
             Number(k.split(":").at(-1)) < minute - 5

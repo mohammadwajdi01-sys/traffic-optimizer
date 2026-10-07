@@ -194,3 +194,17 @@ test("the shipped Arabic helper shapes and orders map text under the actual secu
   expect(result.error).toBeUndefined();
   expect(result.shaped).toBe("ﻋﻤﺎﻥ");expect(result.visual).toEqual(["ﻥﺎﻤﻋ"]);
 });
+
+
+test("Today checks leaving now while Plan explains future windows and both expose saved routes",async({page})=>{
+  await page.goto("/");
+  await expect(page.getByRole("heading",{name:"Your next journey"})).toBeVisible();
+  await expect(page.getByRole("combobox",{name:"Use a saved route"})).toBeVisible();
+  await expect(page.getByLabel("Earliest arrival",{exact:true})).toHaveCount(0);
+  await page.getByRole("button",{name:"Plan a time window",exact:true}).click();
+  await expect(page.getByLabel("Earliest arrival",{exact:true})).toBeVisible();
+  await expect(page.getByRole("combobox",{name:"Use a saved route"})).toBeVisible();
+  await page.getByRole("button",{name:"ع",exact:true}).click();
+  await expect(page.getByRole("combobox",{name:"استخدام رحلة محفوظة"})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});

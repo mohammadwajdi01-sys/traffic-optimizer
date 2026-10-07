@@ -283,7 +283,7 @@ export default function App() {
     setError("");
     go("plan");
   }
-  function useRoute(r: SavedRoute) {
+  function useRoute(r: SavedRoute, stayOnPage = false) {
     const p = nextSavedPlan(r);
     setEditingId(null);
     const isExample = r.plan.origin.source === "demo";
@@ -299,7 +299,7 @@ export default function App() {
     setWeekly([]);
     if (!isWindowPlan(r.plan)) setNotice(t.migratedRoute);
     if (p.origin.source === "gps") setNotice(t.gpsRefresh);
-    go("plan");
+    if (!stayOnPage) go("plan");
     return p;
   }
   async function runSaved(r: SavedRoute, now = false) {
@@ -721,22 +721,23 @@ export default function App() {
   );
   const planner = (
     <form
-      onSubmit={form.handleSubmit(p => analyze(p), errors => setError(errors.latestTime || errors.endDate || errors.date ? t.windowError : t.locationMissing))}
+      onSubmit={page === "today" ? e => {e.preventDefault(); if (origin && destination && accessReady && !busy && online) void leaveNow(); else setError(t.locationMissing);} : form.handleSubmit(p => analyze(p), errors => setError(errors.latestTime || errors.endDate || errors.date ? t.windowError : t.locationMissing))}
       className="planner-form"
     >
-      {(user || visibleSaved.length > 0) && <section className="quick-routes" aria-label={t.quickRoutes}>
-        <label>{t.quickRoutes}<select value={quickRouteId} disabled={busy || routesLoading} onChange={e => {
+      {<section className="quick-routes" aria-label={t.quickRoutes}>
+        <label>{t.quickRoutes}<select value={quickRouteId} disabled={busy || routesLoading || visibleSaved.length === 0} onChange={e => {
           const r = visibleSaved.find(r => r.id === e.target.value);
-          if(r) {try {useRoute(r);} catch(e) {setError((e as Error).message);}}
+          if(r) {try {useRoute(r, true);} catch(e) {setError((e as Error).message);}}
         }}><option value="">{routesLoading ? t.loadingRoutes : t.chooseRoute}</option>{visibleSaved.map(r => <option key={r.id} value={r.id}>{r.name} · {r.plan.destination.displayName}</option>)}</select></label>
-        <p className="micro-copy">{t.quickRoutesHelp}</p>
+        <p className="micro-copy">{!user && visibleSaved.length === 0 ? t.savedSignInHelp : !routesLoading && !routesError && visibleSaved.length === 0 ? t.savedEmptyHelp : t.quickRoutesHelp}</p>
+        {!user && visibleSaved.length === 0 && config.authConfigured && <button type="button" className="button secondary" onClick={() => setAuthOpen(true)}>{t.signin}</button>}
         {routesError && <button type="button" className="button secondary" onClick={() => setRoutesReload(v => v+1)}>{t.retryRoutes}</button>}
       </section>}
       <div className="section-heading">
         <div>
           <span className="eyebrow">{t.ready}</span>
-          <h1>{page === "today" ? t.empty : t.plan}</h1>
-          <p>{t.emptyHelp}</p>
+          <h1>{page === "today" ? t.todayJourney : t.plan}</h1>
+          <p>{page === "today" ? t.todayHelp : t.planHelp}</p>
           {config.publicBeta && !user && !demo && !guestReady && (
             <p className="micro-copy">{t.guestVerification}</p>
           )}
@@ -779,6 +780,7 @@ export default function App() {
           searchEnabled={config.searchConfigured && Boolean(user || guestReady)}
         />
       </div>
+      {page !== "today" && <>
       <div className="mode-tabs" role="group" aria-label={t.plan}>
         {(["arrive_between", "leave_between"] as const).map(
           (m, i) => {
@@ -829,25 +831,28 @@ export default function App() {
           </label>
         </div>
       </details>
+      </>}
+      {page === "today" && <button type="button" className="button primary full" disabled={busy || !online || !accessReady || !origin || !destination} onClick={() => leaveNow()}>{busy ? t.finding : t.leaveNow}</button>}
       <button
-        className="button primary full analyze-button"
+        className={"button full analyze-button " + (page === "today" ? "secondary" : "primary")} 
         disabled={
           busy ||
           !online ||
           (!demo && config.publicBeta && !user && !guestReady)
         }
-        type="submit"
+        type={page === "today" ? "button" : "submit"}
+        onClick={page === "today" ? () => go("plan") : undefined}
       >
         {busy ? (
           <LoaderCircle className="spin" size={20} />
         ) : (
           <BarChart3 size={20} />
         )}{" "}
-        {busy ? t.finding : t.find}
+        {busy ? t.finding : page === "today" ? t.planWindow : t.find}
       </button>
-      <button type="button" className="button secondary full" disabled={busy || !online || !accessReady || !origin || !destination} onClick={() => leaveNow()}>{t.leaveNow}</button>
+      {page !== "today" && <button type="button" className="button secondary full" disabled={busy || !online || !accessReady || !origin || !destination} onClick={() => leaveNow()}>{t.leaveNow}</button>}
       <p className="micro-copy">{t.leaveNowHelp}</p>
-      <p className="micro-copy">{demo ? t.demoAttribution : t.chooseDate}</p>
+      <p className="micro-copy">{demo ? t.demoAttribution : page === "today" ? t.todayTimingHelp : t.chooseDate}</p>
     </form>
   );
 
@@ -1450,6 +1455,7 @@ export default function App() {
                       </button>
                     </>
                   )}
+                  {config.privateAccess && <form method="post" action="/private/lock"><button className="button secondary" type="submit">{t.lockSite}</button><p className="micro-copy">{t.privateAccountHelp}</p></form>}
                   <hr />
                   <label>
                     {t.language}

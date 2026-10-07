@@ -31,12 +31,14 @@ const auth = vi.hoisted(() => ({
   })),
 }));
 vi.mock("@supabase/supabase-js", () => ({ createClient: () => ({ auth }) }));
-const mapMock = vi.hoisted(() => ({status:"unavailable",rtl:vi.fn(),create:vi.fn(),language:vi.fn(),remove:vi.fn()}));
+const mapMock = vi.hoisted(() => ({status:"unavailable",rtl:vi.fn(),create:vi.fn(),language:vi.fn(),remove:vi.fn(),marker:vi.fn(),markerRemove:vi.fn(),center:vi.fn(),source:vi.fn(),bounds:vi.fn()}));
 vi.mock("mapbox-gl",()=>({default:{
   getRTLTextPluginStatus:()=>mapMock.status,
   setRTLTextPlugin:(...args:any[])=>{mapMock.rtl(...args);mapMock.status="deferred";},
-  Map:class {constructor(options:any){mapMock.create(options);}addControl(){}on(){}off(){}remove(){mapMock.remove();}setLanguage(language:string){mapMock.language(language);}},
+  Map:class {constructor(options:any){mapMock.create(options);}addControl(){}on(name:string,callback:any){if(name==="load") queueMicrotask(callback);}off(){}remove(){mapMock.remove();}setLanguage(language:string){mapMock.language(language);}isStyleLoaded(){return true;}getSource(){return {setData:mapMock.source};}easeTo(options:any){mapMock.center(options);}fitBounds(options:any){mapMock.bounds(options);}},
   NavigationControl:class {},
+  Marker:class {setLngLat(coords:any){mapMock.marker(coords);return this;}addTo(){return this;}remove(){mapMock.markerRemove();}},
+  LngLatBounds:class {extend(){return this;}},
 }}));
 beforeEach(() => {
   auth.getSession.mockReset().mockResolvedValue({data:{session:null}});
@@ -232,7 +234,7 @@ describe("Sign-in recovery after a failed human check", () => {
     mount();
     await waitFor(() => expect(options).toBeDefined());
     act(() => options["error-callback"]("600010"));
-    const planButton=screen.getByRole("button",{name:"Find best time"});
+    const planButton=screen.getByRole("button",{name:"Plan a time window"});
     const locationButton=screen.getByRole("button",{name:"Share location for nearby results"});
     const card = screen.getByRole("region", {name: /Complete the human verification/});
     await userEvent.setup().click(within(card).getByRole("button", {name:"Sign in"}));
@@ -440,7 +442,7 @@ describe("Application interactions without service credentials", () => {
     const origin = screen.getByRole("combobox", { name: "From" });
     await u.clear(origin);
     await u.type(origin, "Khalda");
-    await screen.findByRole("option");
+    await screen.findByRole("option",{name:"Khalda, Amman"});
     await u.keyboard("{ArrowDown}{Enter}");
     expect(origin.getAttribute("aria-expanded")).toBe("false");
     expect((origin as HTMLInputElement).value).toContain("Khalda");
@@ -621,6 +623,9 @@ describe("Quick account routes and departure choices", () => {
     await u.selectOptions(picker,route.id);
     expect(screen.getByRole("combobox",{name:"From"}).getAttribute("value")).toBe(route.plan.origin.displayName);
     expect(screen.getByRole("combobox",{name:"To"}).getAttribute("value")).toBe(route.plan.destination.displayName);
+    expect(screen.getByRole("heading",{name:"Your next journey"})).toBeTruthy();
+    await u.click(screen.getByRole("button",{name:"Plan a time window"}));
+    expect((screen.getByRole("combobox",{name:"Use a saved route"}) as unknown as HTMLSelectElement).value).toBe(route.id);
     await u.click(screen.getByRole("button",{name:"Find best time"}));
     await screen.findByRole("heading",{name:"Best times to leave"});
     expect(requests.find(r=>r.path==="/api/analysis/day")?.body).toMatchObject({origin:route.plan.origin,destination:route.plan.destination,earliestTime:route.plan.earliestTime,latestTime:route.plan.latestTime,demo:false});
@@ -684,5 +689,41 @@ describe("Arabic map rendering setup",()=>{
     render(<MapPreview origin={null} destination={null} mapEnabled/>);
     await waitFor(()=>expect(mapMock.create).toHaveBeenCalledTimes(2));
     expect(mapMock.rtl).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("Immediate location map pins",()=>{
+  it("centers the origin pin without a destination, moves it on a fresh GPS reading and clears old route geometry",async()=>{
+    mapMock.marker.mockClear();mapMock.center.mockClear();mapMock.source.mockClear();mapMock.markerRemove.mockClear();
+    vi.stubGlobal("fetch",vi.fn(async()=>({ok:true,json:async()=>({token:"unit-map"})})));
+    const origin={displayName:"Current location",latitude:31.95,longitude:35.91,source:"gps" as const};
+    const view=render(<MapPreview origin={origin} destination={null} mapEnabled/>);
+    await waitFor(()=>expect(mapMock.center).toHaveBeenCalledWith({center:[35.91,31.95],zoom:14}));
+    expect(mapMock.marker).toHaveBeenCalledWith([35.91,31.95]);
+    expect(mapMock.source).toHaveBeenCalledWith(expect.objectContaining({geometry:{type:"LineString",coordinates:[]}}));
+    view.rerender(<MapPreview origin={{...origin,latitude:0,longitude:0}} destination={null} mapEnabled/>);
+    await waitFor(()=>expect(mapMock.center).toHaveBeenCalledWith({center:[0,0],zoom:14}));
+    expect(mapMock.markerRemove).toHaveBeenCalled();
+  });
+  it("draws both pins and fits the route only when both locations are present",async()=>{
+    mapMock.marker.mockClear();mapMock.bounds.mockClear();
+    vi.stubGlobal("fetch",vi.fn(async()=>({ok:true,json:async()=>({token:"unit-map"})})));
+    render(<MapPreview origin={{displayName:"From",latitude:31.95,longitude:35.91}} destination={{displayName:"To",latitude:32,longitude:35.83}} mapEnabled/>);
+    await waitFor(()=>expect(mapMock.bounds).toHaveBeenCalled());
+    expect(mapMock.marker).toHaveBeenCalledWith([35.91,31.95]);expect(mapMock.marker).toHaveBeenCalledWith([35.83,32]);
+  });
+});
+
+describe("Today and Plan purposes",()=>{
+  it("shows account-route guidance to signed-out visitors on both pages and keeps timing controls on Plan",async()=>{
+    const u=userEvent.setup();mount();
+    expect(screen.getByRole("heading",{name:"Your next journey"})).toBeTruthy();
+    expect(screen.getByRole("combobox",{name:"Use a saved route"}).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText(/Sign in to load your account/)).toBeTruthy();
+    expect(screen.queryByLabelText("Earliest arrival")).toBeNull();
+    await u.click(screen.getByRole("button",{name:"Plan a time window"}));
+    expect(screen.getByLabelText("Earliest arrival")).toBeTruthy();
+    expect(screen.getByRole("combobox",{name:"Use a saved route"})).toBeTruthy();
   });
 });
