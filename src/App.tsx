@@ -111,6 +111,11 @@ const devicePreferences = () => {
   }
 };
 export default function App() {
+  const authFocusTarget=useRef<HTMLElement|null>(null);
+  function openSignIn() {
+    authFocusTarget.current=document.activeElement instanceof HTMLElement?document.activeElement:null;
+    setAuthOpen(true);
+  }
   const queryClient = useQueryClient();
   const callbackIntent = useRef(accountCallback(location.href));
   const [accountLinkError,setAccountLinkError] = useState(false);
@@ -256,7 +261,7 @@ export default function App() {
     let authRevision = 0;
     const a = locale === "ar" ? accountAr : accountEn;
     if (callbackIntent.current === "invalid") {
-      clearAccountCallback();setAccountLinkError(true);setAuthMode("forgot");setAuthOpen(true);
+      clearAccountCallback();setAccountLinkError(true);setAuthMode("forgot");openSignIn();
     }
     try { configureAuth(config); } catch { setError(t.authFailed); return; }
     if (!supabase) return;
@@ -284,7 +289,7 @@ export default function App() {
     supabase.auth.initialize().then(result => {
       if(!active)return;
       if(result.error) {
-        clearAccountCallback();setAccountLinkError(true);setAuthMode("forgot");setAuthOpen(true);
+        clearAccountCallback();setAccountLinkError(true);setAuthMode("forgot");openSignIn();
       }
     }).catch(()=>{if(active)setError(t.authFailed);});
     return () => {active=false;data.subscription.unsubscribe();};
@@ -471,7 +476,7 @@ export default function App() {
       } else {
         if (!user) {
           setSaveOpen(false);
-          setAuthOpen(true);
+          openSignIn();
           return;
         }
         await api("/api/routes", r, "POST");
@@ -516,7 +521,7 @@ export default function App() {
   async function runWeek() {
     if (!demo && !user) {
       setError(t.signinForWeek);
-      setAuthOpen(true);
+      openSignIn();
       return;
     }
     if (!origin || !destination) {
@@ -760,7 +765,7 @@ export default function App() {
     return()=>{active=false;};
   },[user]);
   const savedSelector=<SavedRouteSelector routes={visibleSaved} value={quickRouteId} loading={routesLoading} failed={routesError} busy={busy} signedIn={Boolean(user)} authConfigured={config.authConfigured} locale={locale}
-    onSelect={route=>{try{useRoute(route,true);}catch(error){setError(displayFailure(error,locale));}}} onSignIn={()=>setAuthOpen(true)} onRetry={()=>setRoutesReload(value=>value+1)}/>;
+    onSelect={route=>{try{useRoute(route,true);}catch(error){setError(displayFailure(error,locale));}}} onSignIn={()=>openSignIn()} onRetry={()=>setRoutesReload(value=>value+1)}/>;
   const resultBody=analysis && <ResultPanel navigation={prefs.navigation} analysis={analysis} selected={selected} onSelect={setSelected} locale={locale} onSave={()=>{setName("");setEditingRoute(null);setReminders(false);setSaveOpen(true);}}/>;
   const activeCandidate=page==="today"?instant?.candidate??null:selected;
   let minTravelDate:string;
@@ -788,7 +793,7 @@ export default function App() {
           siteKey={config.turnstileSiteKey}
           onReady={(expiresAt) => {setGuestExpiresAt(expiresAt); setGuestReady(true); setError("");}}
           onError={message => {if (!authOpen) setError(message);}}
-          onSignIn={config.authConfigured ? () => {setError(""); setAuthOpen(true);} : undefined}
+          onSignIn={config.authConfigured ? () => {setError(""); openSignIn();} : undefined}
         />
       )}
       {!demo && <SearchRegion detectedCountry={config.detectedCountry} searchEnabled={config.searchConfigured && Boolean(user || guestReady)} onLocation={location=>changeLocation("from",location)} />}
@@ -1013,12 +1018,12 @@ export default function App() {
             <details className="profile-menu" ref={profileMenu} onKeyDown={event => {if(event.key === "Escape") {event.currentTarget.open = false;event.currentTarget.querySelector("summary")?.focus();}}}>
               <summary className="avatar" aria-label={t.accountMenu} title={t.accountMenu}>{user ? user[0].toUpperCase() : <Settings size={20}/>}</summary>
               <div className="profile-actions">
-                {user ? <p><bdi>{user}</bdi></p> : <Button className="button secondary" onClick={() => {setAuthOpen(true);if(profileMenu.current)profileMenu.current.open=false;}}>{t.signin}</Button>}
+                {user ? <p><bdi>{user}</bdi></p> : <Button className="button secondary" onClick={() => {openSignIn();if(profileMenu.current)profileMenu.current.open=false;}}>{t.signin}</Button>}
                 <a href="/settings" onClick={event => {event.preventDefault();go("settings");}}><Settings size={18}/>{t.settings}</a>
                 {role === "admin" && user && <a href="/admin" onClick={event => {event.preventDefault();go("admin");}}><Shield size={18}/>{t.owner}</a>}
               </div>
             </details>
-            {!user && <Button className="button secondary small" onClick={() => setAuthOpen(true)}>{t.signin}</Button>}
+            {!user && <Button className="button secondary small" onClick={() => openSignIn()}>{t.signin}</Button>}
           </div>
         </header>
         <div className="workspace">
@@ -1030,7 +1035,7 @@ export default function App() {
           {error && (
             <Notice>
               <span>{error}</span>
-              {error === t.accountRequired && <Button className="button secondary small" onClick={() => setAuthOpen(true)}>{t.signin}</Button>}
+              {error === t.accountRequired && <Button className="button secondary small" onClick={() => openSignIn()}>{t.signin}</Button>}
               <button aria-label={t.close} onClick={() => setError("")}>
                 <X size={18} />
               </button>
@@ -1148,7 +1153,7 @@ export default function App() {
                 <h1>{t.settings}</h1>
               </div>
               <Suspense fallback={<p role="status">{locale==="ar"?"جارٍ تحميل القسم…":"Loading section…"}</p>}><SettingsPanel locale={locale} prefs={prefs} onPrefs={value=>{setPrefs(value);if(value.locale!==locale)setLocale(value.locale);}} signedIn={Boolean(user&&!demo)} loading={prefsLoading} failed={prefsError} saving={prefsBusy} dirty={JSON.stringify({...prefs,locale})!==JSON.stringify(savedPrefs)} onRetry={()=>setRoutesReload(v=>v+1)} onSave={()=>void savePreferences()} onCancel={()=>{setPrefs({...savedPrefs});setLocale(savedPrefs.locale);}}
-                account={user?<><p><bdi>{user}</bdi></p><div className="settings-actions"><Button className="button secondary" disabled={busy} onClick={()=>{setEmail(user);setAuthMode("forgot");setAccountLinkError(false);setAuthOpen(true);}}>{locale==="ar"?accountAr.change:accountEn.change}</Button><Button className="button secondary" disabled={busy} onClick={()=>void signOutPersonal()}>{t.localSignOut}</Button></div><p className="micro-copy">{t.localSignOutHelp}</p></>:<><p>{config.authConfigured?t.signin:t.authSetup}</p><Button className="button secondary" onClick={()=>setAuthOpen(true)}>{t.signin}</Button></>}
+                account={user?<><p><bdi>{user}</bdi></p><div className="settings-actions"><Button className="button secondary" disabled={busy} onClick={()=>{setEmail(user);setAuthMode("forgot");setAccountLinkError(false);openSignIn();}}>{locale==="ar"?accountAr.change:accountEn.change}</Button><Button className="button secondary" disabled={busy} onClick={()=>void signOutPersonal()}>{t.localSignOut}</Button></div><p className="micro-copy">{t.localSignOutHelp}</p></>:<><p>{config.authConfigured?t.signin:t.authSetup}</p><Button className="button secondary" onClick={()=>openSignIn()}>{t.signin}</Button></>}
                 website={config.privateAccess?<div className="website-actions"><form method="post" action="/private/lock" onSubmit={event=>{event.preventDefault();void lockWebsite();}}><Button className="button secondary" type="submit" disabled={busy}>{t.lockSite}</Button></form><Button className="button secondary" disabled={busy} onClick={()=>void signOutPersonal(true)}>{t.lockAndSignOut}</Button><p className="micro-copy">{t.privateAccountHelp}</p></div>:undefined}
                 pushBusy={pushBusy} push={push} pushAvailable={Boolean(config.vapidPublicKey&&user&&!demo)} onPush={()=>void(push?disablePush():enablePush())} install={installPrompt?async()=>{await installPrompt.prompt();setInstallPrompt(null);}:undefined}
                 recordingAllowed={Boolean(user&&!demo&&savedPrefs.measurement_opt_in&&!prefsLoading&&!prefsError)} tripStart={Boolean(tripStart)} onTrip={()=>void recordTrip()} onExport={exportRoutes}
@@ -1235,7 +1240,7 @@ export default function App() {
       </Modal>}
       {editingRoute && <EditSavedRoute key={editingRoute.id} route={editingRoute} locale={locale} push={push} onSave={updateRoute} onClose={()=>setEditingRoute(null)}/>}
       {deletingRoute && <DeleteSavedRoute key={deletingRoute.id} route={deletingRoute} locale={locale} onDelete={()=>deleteRoute(deletingRoute)} onClose={()=>setDeletingRoute(null)}/>}
-      {authOpen && <Suspense fallback={<p role="status">{locale==="ar"?"جارٍ تحميل القسم…":"Loading section…"}</p>}><SignInDialog config={config} email={email} onEmail={setEmail} initialMode={authMode} linkError={accountLinkError} onClose={() => {setAuthOpen(false);setAuthMode("login");setAccountLinkError(false);}} /></Suspense>}
+      {authOpen && <Suspense fallback={<p role="status">{locale==="ar"?"جارٍ تحميل القسم…":"Loading section…"}</p>}><SignInDialog focusTarget={()=>authFocusTarget.current} config={config} email={email} onEmail={setEmail} initialMode={authMode} linkError={accountLinkError} onClose={() => {setAuthOpen(false);setAuthMode("login");setAccountLinkError(false);}} /></Suspense>}
       {passwordAccount && <Suspense fallback={<p role="status">{locale==="ar"?"جارٍ تحميل القسم…":"Loading section…"}</p>}><PasswordDialog key={passwordAccount.id} userId={passwordAccount.id} email={passwordAccount.email} locale={locale} onClose={()=>{setPasswordAccount(null);recoveryAccount.current=null;}} onSaved={()=>{setPasswordAccount(null);recoveryAccount.current=null;setNotice(locale==="ar"?accountAr.saved:accountEn.saved);}}/></Suspense>}
     </div>
   );
