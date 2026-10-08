@@ -231,7 +231,9 @@ test("reuses a saved route, checks Leave now and selects a listed departure on s
   await page.getByRole("dialog").getByRole("button",{name:"Save route",exact:true}).click();
   await page.locator("nav").getByRole("link",{name:"Routes",exact:true}).filter({visible:true}).first().click();
   const card=page.locator("article.saved-route").filter({hasText:"Fast commute"});
-  await card.getByRole("button",{name:"Compare departures",exact:true}).click();
+  await card.getByRole("button",{name:"Use in Plan",exact:true}).click();
+  await expect(page.locator(".result-panel")).toHaveCount(0);
+  await page.getByRole("button",{name:"Find best time",exact:true}).click();
   await expect(page.getByRole("heading",{name:"Best times to leave",exact:true})).toBeVisible();
   await page.getByText("Checked departures table",{exact:true}).first().click();
   const choices=page.getByRole("combobox",{name:"Choose a checked departure"});
