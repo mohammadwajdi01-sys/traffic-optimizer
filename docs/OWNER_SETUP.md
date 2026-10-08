@@ -12,16 +12,11 @@ Hosted beta: https://traffic-optimizer.mohammadwajdi01.workers.dev/
 - Cloudflare server key saved and changed to Secret.
 - Google login provider enabled.
 
-## Verification still needed
+## Current setup and remaining evidence — 8 October 2026
 
-- Determine the current server-secret binding name and reconcile code compatibility. Never print or commit secret values.
-- Verify the Google provider is enabled in the correct Supabase project and add the corresponding OAuth interface to this recovered baseline.
-- Verify real owner sign-in and consistent server/database authorization.
-- Verify saved routes/preferences, cross-user isolation and opt-in reminder delivery.
-- Keep paid usage and Google routing disabled. Do not use a login setting as evidence that traffic coverage is available.
+The server database binding compatibility, Google sign-in interface, owner role and deployment protection were repaired and verified in earlier releases. Release 28 applied device-aware reminders. Preserve the existing owner identity and credentials; no reconnection is needed.
 
-The previous setup guides claimed GitHub read-only access and missing owner configuration. Those claims are historical and must not be used to request repeated setup. A secure sign-in may be needed only if the remaining authenticated verification cannot use existing connections; stop and state the exact blocker at that point.
-
+Remaining: matching backend password enforcement/direct-Auth rejection; ordinary non-team signup/reset receipt and SMTP/redirect evidence; actual saved-route re-login/two-account/device acceptance; provider account quota/billing reconciliation; a successful guarded GitHub production workflow and hosted capacity. The workflow uses the existing production environment names documented in OPERATIONS.md; its secret availability cannot be inspected with the current GitHub connector. Phone/GPS/maps/push/PWA and Libya/A33 acceptance stay postponed.
 
 ## Personal password accounts — 8 October 2026
 

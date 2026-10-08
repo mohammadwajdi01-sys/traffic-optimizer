@@ -1,5 +1,8 @@
 name: Verify
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -13,12 +16,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: npm run test:capacity
       - run: npx playwright install --with-deps chromium
-      - run: npx wrangler dev --env verification --port 8787 --inspector-port 9230 > /tmp/traffic-server.log 2>&1 &
+      - run: npx wrangler dev --env verification --persist-to /tmp/traffic-verification-state --port 8787 --inspector-port 9230 > /tmp/traffic-server.log 2>&1 &
         env:
           WRANGLER_SEND_METRICS: false
       - run: node scripts/private-fixture.mjs
-      - run: npx wrangler dev --env privatecheck --port 8788 --inspector-port 9231 > /tmp/traffic-private-server.log 2>&1 &
+      - run: npx wrangler dev --env privatecheck --persist-to /tmp/traffic-privatecheck-state --port 8788 --inspector-port 9231 > /tmp/traffic-private-server.log 2>&1 &
         env:
           WRANGLER_SEND_METRICS: false
       - run: |
@@ -46,3 +50,9 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: operations-evidence
+          path: artifacts/operations/capacity.json
+          retention-days: 30

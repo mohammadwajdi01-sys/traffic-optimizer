@@ -83,6 +83,24 @@ assert.equal((await pg.query('select count(*)::int as n from reminder_deliveries
 await pg.exec(`update saved_routes set name='Updated' where id='${rid}'`);
 assert.equal((await pg.query('select status from reminder_deliveries')).rows[0].status,'cancelled');
 await pg.exec('reset role');
+// Separate SQL sessions exercise route/preferences persistence and denied cross-owner writes.
+// These are database fixtures, not a hosted Auth re-login or real browser acceptance.
+await pg.exec(`set role authenticated;set request.jwt.claim.sub='${c}';`);
+const saved=(await pg.query(`insert into saved_routes(user_id,name,plan,days,reminders) values('${c}','Disposable acceptance route','{"origin":{"latitude":0,"longitude":0},"destination":{"latitude":1,"longitude":1},"timezone":"Asia/Amman","safetyBufferMinutes":7}',array[1,3],false) returning id`)).rows[0].id;
+await pg.exec(`update saved_routes set name='Renamed acceptance route' where id='${saved}';update user_preferences set locale='ar',navigation='waze',safety_buffer=7 where user_id='${c}';reset role;`);
+await pg.exec(`set role authenticated;set request.jwt.claim.sub='${b}';`);
+assert.equal((await pg.query(`select id from saved_routes where id='${saved}'`)).rows.length,0);
+assert.equal((await pg.query(`update saved_routes set name='Unauthorized' where id='${saved}' returning id`)).rows.length,0);
+assert.equal((await pg.query(`delete from saved_routes where id='${saved}' returning id`)).rows.length,0);
+assert.equal((await pg.query(`update user_preferences set safety_buffer=60 where user_id='${c}' returning user_id`)).rows.length,0);
+await pg.exec(`reset role;set role authenticated;set request.jwt.claim.sub='${c}';`);
+assert.equal((await pg.query(`select name from saved_routes where id='${saved}'`)).rows[0].name,'Renamed acceptance route');
+assert.deepEqual((await pg.query(`select locale,navigation,safety_buffer from user_preferences where user_id='${c}'`)).rows[0],{locale:'ar',navigation:'waze',safety_buffer:7});
+await assert.rejects(pg.exec(`update saved_routes set user_id='${b}' where id='${saved}'`));
+assert.equal((await pg.query(`delete from saved_routes where id='${saved}' returning id`)).rows.length,1);
+assert.equal((await pg.query(`select id from saved_routes where id='${saved}'`)).rows.length,0);
+await pg.exec('reset role');
+console.log('PASS: owned route create/edit/delete and preference persistence across fixture sessions; foreign reads/updates/deletes and owner reassignment denied.');
 await pg.exec(`delete from auth.users where id='${a}'`);
 assert.equal(
   (await pg.query("select count(*)::int as n from notification_jobs")).rows[0]

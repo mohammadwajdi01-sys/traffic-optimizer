@@ -1,3 +1,18 @@
+# Current continuation — operations batch, 8 October 2026
+
+Private hosted beta: https://traffic-optimizer.mohammadwajdi01.workers.dev/
+Repository: https://github.com/mohammadwajdi01-sys/traffic-optimizer
+
+Release 28 remains active at 100%; PR #15 merged, device/reminder migration applied, 141 application tests and 63 Chromium cases passed in its final CI. Owner Google identity, private access and zero-budget/provider safeguards remain intact. Owner reports password eyes/rules and Settings Save/Discard/retry/consent worked; ordinary-user mail and matching backend password configuration remain pending.
+
+Queue 11–20 adds a complete-CI-gated main-only staged deployment path, configuration comparison, migration hash guard, local concurrency/restart drill, and recovery/billing/account evidence procedures. See [OPERATIONS.md](OPERATIONS.md) and [PROVIDER_RECONCILIATION.md](PROVIDER_RECONCILIATION.md). GitHub production secret availability and a successful production workflow run remain unverified. This tooling/documentation batch does not change application runtime or database data.
+
+Hosted saved-route re-login/two-account acceptance remains pending. Device/private-session, GPS, nearby search, Android coordinates, maps/Arabic labels, actual notifications/PWA and Libya/A33 checks remain postponed. No full V1 acceptance or hosted capacity/billing guarantee is claimed.
+
+Earlier evidence below is historical; use this block and the current WBS for current status.
+
+---
+
 # Settings and password refinement — 8 October 2026
 
 Task 3.08 now groups Account, Journey preferences, Notifications, Privacy and Website access. Advanced buffer/timezone help, preference loading/error/retry, draft Save/Discard, saved-consent trip recording, nearby-location clear and device-example/export scope are explicit. Account saves use an expected-session check and ignore stale responses; signed-in defaults no longer inherit guest navigation/buffer defaults. Route-specific saved buffers remain intact. Recording state clears on account change.

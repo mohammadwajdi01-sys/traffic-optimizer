@@ -1,6 +1,6 @@
 # Reminder and allowance operation
 
-Device storage uses an additive `push_devices` table and preserves the legacy subscription table for rollback. Existing endpoints are backfilled; current-endpoint removal also clears a matching legacy row. No production migration has been applied yet.
+Device storage uses an additive `push_devices` table and preserves the legacy subscription table for rollback. Existing endpoints are backfilled; current-endpoint removal also clears a matching legacy row. Production migration `device_reminder_deliveries` was applied at history version `20261008163253` before release 28 activation; ownership policies, grants and backfill were independently verified.
 
 The private beta remains protected; no paid provider is enabled by this release.
 
