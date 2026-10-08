@@ -215,6 +215,15 @@ try {
     (await call("/allowance", { user: "user-x", role: "user" })).body.remaining,
     9,
   );
+  await call('/update',{allowances:{user:2},userAllowance:{userId:'user-x',limit:3}});
+  assert.equal((await call('/allowance',{user:'user-x',role:'user'})).body.limit,3);
+  assert.equal((await call('/allowance',{user:'user-y',role:'user'})).body.limit,2);
+  await call('/update',{userAllowance:{userId:'user-x',limit:null}});
+  assert.equal((await call('/allowance',{user:'user-x',role:'user'})).body.limit,2);
+  await call('/update',{allowances:{user:0}});
+  assert.equal((await call('/analysis',{user:'blocked-user',role:'user'})).status,429);
+  assert.equal((await call('/config')).body.paid,false);
+  assert.equal((await call('/config')).body.providers.mapbox.hard,5);
   await call("/update", { provider: "mapbox", hard: 6, paid: false });
   assert.equal((await call("/reserve", { provider: "mapbox" })).status, 429);
   await call("/update", { paid: true, monthlyBudget: 0 });

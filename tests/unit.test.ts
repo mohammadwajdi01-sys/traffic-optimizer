@@ -369,3 +369,22 @@ describe("Country-scoped location search", () => {
     expect(() => locationQuery("/api/location/unrecognized",locationSearchSchema.parse({}))).toThrow();
   });
 });
+
+describe('selected reminder timing and bounded retries',()=>{
+ it('schedules lead times without changing departure, including a future date across midnight',async()=>{
+  const {reminderTiming,retryAt}=await import('../shared/reminders');
+  const now=Date.parse('2026-10-08T20:00Z'),departureAt='2026-10-08T22:15:00.000Z';
+  expect(reminderTiming({departureAt},20,now)).toEqual({dueAt:'2026-10-08T21:55:00.000Z',expiresAt:departureAt});
+  expect(()=>reminderTiming({departureAt},5,now)).toThrow();
+  expect(()=>reminderTiming({departureAt},20,Date.parse(departureAt))).toThrow();
+  expect(retryAt(1,now,'2026-10-08T22:00Z')).toBe('2026-10-08T20:05:00.000Z');
+  expect(retryAt(3,now,'2026-10-08T22:00Z')).toBeNull();
+  expect(retryAt(1,now,'2026-10-08T20:02Z')).toBeNull();
+ });
+});
+
+it('rejects non-push endpoints, credentials and alternate ports before delivery',async()=>{
+ const {pushEndpointAllowed}=await import('../shared/reminders');
+ expect(pushEndpointAllowed('https://fcm.googleapis.com/push')).toBe(true);
+ for(const url of ['http://fcm.googleapis.com/push','https://fcm.googleapis.com.evil.test/push','https://user:pass@fcm.googleapis.com/push','https://fcm.googleapis.com:8443/push','https://127.0.0.1/push'])expect(pushEndpointAllowed(url)).toBe(false);
+});

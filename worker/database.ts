@@ -8,6 +8,7 @@ export async function db(
     body?: unknown;
     token?: string;
     service?: boolean;
+    ignoreDuplicates?:boolean;
   } = {},
 ) {
   if (!env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY)
@@ -19,7 +20,7 @@ export async function db(
     apikey: key,
     "Content-Type": "application/json",
     Prefer: path.includes("on_conflict")
-      ? "return=representation,resolution=merge-duplicates"
+      ? `return=representation,resolution=${options.ignoreDuplicates?"ignore-duplicates":"merge-duplicates"}`
       : "return=representation",
   };
   if (options.token) headers.Authorization = `Bearer ${options.token}`;

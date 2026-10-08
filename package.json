@@ -20,7 +20,7 @@
     "keys:push": "node scripts/generate-vapid.mjs",
     "test:db": "node tests/database.mjs",
     "worker:build": "WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --outdir artifacts/worker",
-    "test:budget": "npm run worker:build && node tests/budget.mjs"
+    "test:budget": "npm run worker:build && node tests/budget.mjs && node tests/reminders.mjs"
   },
   "keywords": [],
   "author": "",

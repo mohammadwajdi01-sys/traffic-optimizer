@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -56,9 +56,12 @@ import { SavedRouteSelector } from "./SavedRouteSelector";
 import { initialJourney, rerankAnalysis, recommendationAllowed } from "../shared/journey-options";
 import { useSearchLocation } from "./search-location";
 import GuestAccess from "./GuestAccess";
-import SignInDialog from "./SignInDialog";
-import PasswordDialog from "./PasswordDialog";
-import SettingsPanel from "./SettingsPanel";
+const SignInDialog=lazy(()=>import("./SignInDialog"));
+const PasswordDialog=lazy(()=>import("./PasswordDialog"));
+const SettingsPanel=lazy(()=>import("./SettingsPanel"));
+const Owner=lazy(()=>import("./Owner"));
+const PolicyPage=lazy(()=>import("./PolicyPage"));
+const ReminderControls=lazy(()=>import("./ReminderControls"));
 import {accountCallback, clearAccountCallback} from "./account-auth";
 import {accountAr,accountEn} from "./account-copy";
 import { LocationField } from "./LocationField";
@@ -67,7 +70,8 @@ import { MapPreview } from "./MapPreview";
 import { nextSavedPlan } from "../shared/saved-route";
 import { SelectedJourney } from "./SelectedJourney";
 import { SavedRouteCard, EditSavedRoute, DeleteSavedRoute } from "./SavedRoutes";
-import { WeekResults, type WeekStatus } from "./WeekResults";
+import type {WeekStatus} from "./WeekResults";
+const WeekResults=lazy(()=>import("./WeekResults").then(m=>({default:m.WeekResults})));
 import { repeatAr, repeatEn } from "./repeat-copy";
 import { Button, FieldError, Modal, Notice, displayFailure } from "./feedback";
 import { broadcastWebsiteLock } from "./private-session";
@@ -164,6 +168,7 @@ export default function App() {
     [guestReady, setGuestReady] = useState(false),
     [guestExpiresAt, setGuestExpiresAt] = useState<number | null>(null),
     [push, setPush] = useState(false),
+    [pushBusy,setPushBusy] = useState(false),
     [tripStart, setTripStart] = useState<string | null>(null);
   const [savedPrefs,setSavedPrefs]=useState(prefs);
   const [prefsLoading,setPrefsLoading]=useState(false),[prefsError,setPrefsError]=useState(false),[prefsBusy,setPrefsBusy]=useState(false);
@@ -332,8 +337,8 @@ export default function App() {
     if (user && config.vapidPublicKey && "serviceWorker" in navigator && "PushManager" in window) {
       navigator.serviceWorker.ready.then(r => r.pushManager.getSubscription()).then(async sub => {
         if (!sub) return;
-        const status = await api<{subscribed: boolean}>("/api/push/status", {endpoint: sub.endpoint});
-        if(active) setPush(status.subscribed);
+        const status = await api<{subscribed: boolean}>("/api/push/status", {endpoint: sub.endpoint},undefined,undefined,user);
+        if(active){setPush(status.subscribed);if(!status.subscribed)await sub.unsubscribe();}
       }).catch(() => {});
     }
     return () => {active = false;};
@@ -637,6 +642,7 @@ export default function App() {
     }catch(e){if(accountRef.current===owner)setError(displayFailure(e,locale));}
   }
   async function enablePush() {
+    if(pushBusy||!user)return;const owner=user;setPushBusy(true);
     try {
       if (!user || !config.vapidPublicKey || !("PushManager" in window)) {
         setError(t.pushUnavailable);
@@ -659,22 +665,27 @@ export default function App() {
         userVisibleOnly: true,
         applicationServerKey: bytes,
       });
-      await api("/api/push", subscription.toJSON());
+      await api("/api/push", subscription.toJSON(),undefined,undefined,owner);
+      if(accountRef.current!==owner)return;
       setPush(true);
       setNotice(t.pushEnabled);
-    } catch (e) {
-      setError(displayFailure(e, locale));
+    } catch (e) {if(accountRef.current===owner)setError(displayFailure(e, locale));}
+    finally {setPushBusy(false);}
+  }
+  async function detachDevice(owner:string) {
+    if(!('serviceWorker' in navigator))return;
+    const registration=await navigator.serviceWorker.ready;
+    const subscription=await registration.pushManager.getSubscription();
+    if(subscription) {
+      try {await api('/api/push',{endpoint:subscription.endpoint},'DELETE',undefined,owner);}
+      finally {await subscription.unsubscribe();}
     }
   }
   async function disablePush() {
-    try {
-      await api("/api/push", undefined, "DELETE");
-      const r = await navigator.serviceWorker.ready;
-      await (await r.pushManager.getSubscription())?.unsubscribe();
-      setPush(false);
-    } catch (e) {
-      setError(displayFailure(e, locale));
-    }
+    if(!user||pushBusy)return;const owner=user;setPushBusy(true);
+    try {await detachDevice(owner);if(accountRef.current===owner)setPush(false);}
+    catch(e){if(accountRef.current===owner)setError(displayFailure(e,locale));}
+    finally{setPushBusy(false);}
   }
   function clearProtected() {
     cancelRequest();
@@ -701,6 +712,8 @@ export default function App() {
   async function signOutPersonal(lock = false) {
     setBusy(true); setError("");
     try {
+      // Remove this browser endpoint while its personal session is still valid.
+      if(user&&push)await detachDevice(user).catch(()=>{});
       const result = await supabase?.auth.signOut({scope:"local"});
       if (result?.error) throw result.error;
       clearProtected();
@@ -733,6 +746,19 @@ export default function App() {
     { id: "routes", label: t.routes, icon: Bookmark },
   ];
 
+  useEffect(()=>{
+    const id=new URLSearchParams(location.search).get('reminder');
+    if(!user||!id||!(/^[0-9a-f-]{36}$/.test(id)))return;
+    let active=true;
+    api<any>(`/api/reminders/${id}`,undefined,undefined,undefined,user).then(row=>{
+      if(!active)return;
+      const p=planSchema.parse(row.plan),candidate=row.candidate as Candidate;
+      form.reset(p);setPlan(p);setOrigin(p.origin);setDestination(p.destination);setSelected(candidate);setInstant(null);
+      setAnalysis({id:row.id,plan:p,samples:[candidate],best:null,lowest:null,latest:null,avoid:[],provider:candidate.provider,quality:'limited',partial:true,calls:0,createdAt:row.created_at??new Date().toISOString(),warnings:[],lowestMetric:'duration'});
+      setNotice(locale==='ar'?'هذا تقدير التذكير المحفوظ. اطلب فحصاً جديداً قبل الرحلة.':'This is the saved reminder estimate. Request a fresh check before travelling.');go('plan');history.replaceState(null,'','/plan');
+    }).catch(e=>{if(active)setError(displayFailure(e,locale));});
+    return()=>{active=false;};
+  },[user]);
   const savedSelector=<SavedRouteSelector routes={visibleSaved} value={quickRouteId} loading={routesLoading} failed={routesError} busy={busy} signedIn={Boolean(user)} authConfigured={config.authConfigured} locale={locale}
     onSelect={route=>{try{useRoute(route,true);}catch(error){setError(displayFailure(error,locale));}}} onSignIn={()=>setAuthOpen(true)} onRetry={()=>setRoutesReload(value=>value+1)}/>;
   const resultBody=analysis && <ResultPanel navigation={prefs.navigation} analysis={analysis} selected={selected} onSelect={setSelected} locale={locale} onSave={()=>{setName("");setEditingRoute(null);setReminders(false);setSaveOpen(true);}}/>;
@@ -875,7 +901,7 @@ export default function App() {
 
   const legal = page === "terms" || page === "privacy";
   return (
-    <div className="app-shell">
+    <div className="app-shell"><a className="skip-link" href="#main-content">{locale==='ar'?'انتقل إلى المحتوى':'Skip to main content'}</a>
       <aside className="sidebar">
         <a
           href="/"
@@ -948,7 +974,7 @@ export default function App() {
           </div>
         </div>
       </aside>
-      <main className="main">
+      <main className="main" id="main-content" tabIndex={-1}>
         <header className="topbar">
           <div className="mobile-brand">
             <span className="brand-icon">
@@ -1068,7 +1094,7 @@ export default function App() {
           )}
           {(page==="today" || page==="plan") && <div className="planning-grid">
             <section className="control-panel">{page==="today"?<TodayView navigation={prefs.navigation} instant={instant} locale={locale} busy={busy} online={online} onRefresh={()=>void leaveNow()}>{planner}</TodayView>:planner}</section>
-            <div className="map-results" ref={mapPanel}><MapPreview origin={origin} destination={destination} candidate={activeCandidate} googleContent={page==="plan" && Boolean(analysis?.provider.includes("google"))} mapEnabled={config.mapConfigured && Boolean(user||guestReady)} verificationPending={config.publicBeta && !user && !guestReady}/>{page==="plan" && resultBody}</div>
+            <div className="map-results" ref={mapPanel}><MapPreview origin={origin} destination={destination} candidate={activeCandidate} googleContent={page==="plan" && Boolean(analysis?.provider.includes("google"))} mapEnabled={config.mapConfigured && Boolean(user||guestReady)} verificationPending={config.publicBeta && !user && !guestReady}/>{page==="plan" && resultBody}{page==="plan"&&analysis&&selected&&<Suspense fallback={<p role="status">{locale==="ar"?"جارٍ تحميل القسم…":"Loading section…"}</p>}><ReminderControls key={`${user}:${selected.departureAt}`} locale={locale} account={demo?null:user} push={push} plan={analysis.plan} candidate={selected}/></Suspense>}</div>
           </div>}
           {page === "week" && <>
             <div className="page-heading"><div><span className="eyebrow">{t.week}</span><h1>{t.weekTitle}</h1><p>{origin&&destination?`${origin.displayName} · ${destination.displayName}`:t.weekHelp}</p></div>
@@ -1080,7 +1106,7 @@ export default function App() {
               <p>{repeat.weekWindow}: {t[mode]} · <bdi>{form.watch("earliestTime")}–{form.watch("latestTime")}</bdi> {endsNextDay?`(${t.endsNextDay})`:""} · <bdi>{form.watch("timezone")}</bdi></p><Button className="button secondary" disabled={busy} onClick={()=>go("plan")}>{repeat.editWindow}</Button><p className="micro-copy">{repeat.selectedHelp}</p>
               {busy&&<Button className="button secondary" onClick={()=>{cancelRequest();setNotice(t.cancelHelp);}}>{t.cancelCheck}</Button>}
             </section>
-            {weekly.length?<WeekResults analyses={weekly} statuses={weekStatuses} plan={plan} locale={locale} onChoose={(a,c)=>{form.reset(a.plan);setPlan(a.plan);setInstant(null);setOrigin(a.plan.origin);setDestination(a.plan.destination);setAnalysis(a);setSelected(c);go("plan");}}/>:<section className="panel empty-state"><CalendarDays size={42}/><p>{t.weekEmpty}</p></section>}
+            {weekly.length?<Suspense fallback={<p role="status">{locale==="ar"?"جارٍ تحميل القسم…":"Loading section…"}</p>}><WeekResults analyses={weekly} statuses={weekStatuses} plan={plan} locale={locale} onChoose={(a,c)=>{form.reset(a.plan);setPlan(a.plan);setInstant(null);setOrigin(a.plan.origin);setDestination(a.plan.destination);setAnalysis(a);setSelected(c);go("plan");}}/></Suspense>:<section className="panel empty-state"><CalendarDays size={42}/><p>{t.weekEmpty}</p></section>}
           </>}
           {page === "routes" && (
             <>
@@ -1121,46 +1147,21 @@ export default function App() {
               <div className="page-heading">
                 <h1>{t.settings}</h1>
               </div>
-              <SettingsPanel locale={locale} prefs={prefs} onPrefs={value=>{setPrefs(value);if(value.locale!==locale)setLocale(value.locale);}} signedIn={Boolean(user&&!demo)} loading={prefsLoading} failed={prefsError} saving={prefsBusy} dirty={JSON.stringify({...prefs,locale})!==JSON.stringify(savedPrefs)} onRetry={()=>setRoutesReload(v=>v+1)} onSave={()=>void savePreferences()} onCancel={()=>{setPrefs({...savedPrefs});setLocale(savedPrefs.locale);}}
+              <Suspense fallback={<p role="status">{locale==="ar"?"جارٍ تحميل القسم…":"Loading section…"}</p>}><SettingsPanel locale={locale} prefs={prefs} onPrefs={value=>{setPrefs(value);if(value.locale!==locale)setLocale(value.locale);}} signedIn={Boolean(user&&!demo)} loading={prefsLoading} failed={prefsError} saving={prefsBusy} dirty={JSON.stringify({...prefs,locale})!==JSON.stringify(savedPrefs)} onRetry={()=>setRoutesReload(v=>v+1)} onSave={()=>void savePreferences()} onCancel={()=>{setPrefs({...savedPrefs});setLocale(savedPrefs.locale);}}
                 account={user?<><p><bdi>{user}</bdi></p><div className="settings-actions"><Button className="button secondary" disabled={busy} onClick={()=>{setEmail(user);setAuthMode("forgot");setAccountLinkError(false);setAuthOpen(true);}}>{locale==="ar"?accountAr.change:accountEn.change}</Button><Button className="button secondary" disabled={busy} onClick={()=>void signOutPersonal()}>{t.localSignOut}</Button></div><p className="micro-copy">{t.localSignOutHelp}</p></>:<><p>{config.authConfigured?t.signin:t.authSetup}</p><Button className="button secondary" onClick={()=>setAuthOpen(true)}>{t.signin}</Button></>}
                 website={config.privateAccess?<div className="website-actions"><form method="post" action="/private/lock" onSubmit={event=>{event.preventDefault();void lockWebsite();}}><Button className="button secondary" type="submit" disabled={busy}>{t.lockSite}</Button></form><Button className="button secondary" disabled={busy} onClick={()=>void signOutPersonal(true)}>{t.lockAndSignOut}</Button><p className="micro-copy">{t.privateAccountHelp}</p></div>:undefined}
-                push={push} pushAvailable={Boolean(config.vapidPublicKey&&user&&!demo)} onPush={()=>void(push?disablePush():enablePush())} install={installPrompt?async()=>{await installPrompt.prompt();setInstallPrompt(null);}:undefined}
+                pushBusy={pushBusy} push={push} pushAvailable={Boolean(config.vapidPublicKey&&user&&!demo)} onPush={()=>void(push?disablePush():enablePush())} install={installPrompt?async()=>{await installPrompt.prompt();setInstallPrompt(null);}:undefined}
                 recordingAllowed={Boolean(user&&!demo&&savedPrefs.measurement_opt_in&&!prefsLoading&&!prefsError)} tripStart={Boolean(tripStart)} onTrip={()=>void recordTrip()} onExport={exportRoutes}
                 onClearExamples={()=>{localStorage.removeItem("traffic.demoRoutes");if(demo||!user)setSaved([]);setNotice(t.clearDone);}}
-                onClearLocation={()=>{useSearchLocation.getState().setContext({countryCode:useSearchLocation.getState().countryCode});setNotice(locale==="ar"?"تم مسح موقع البحث القريب.":"Nearby-search location cleared.");}}/>
+                onClearLocation={()=>{useSearchLocation.getState().setContext({countryCode:useSearchLocation.getState().countryCode});setNotice(locale==="ar"?"تم مسح موقع البحث القريب.":"Nearby-search location cleared.");}}/></Suspense><Suspense fallback={<p role="status">{locale==="ar"?"جارٍ تحميل القسم…":"Loading section…"}</p>}><ReminderControls key={user??"guest"} locale={locale} account={user} push={push} list/></Suspense>
 
             </>
           )}
           {page === "admin" && (
-            <Owner role={role} config={config} t={t} onError={setError} />
+            <Suspense fallback={<p role="status">{locale==="ar"?"جارٍ تحميل القسم…":"Loading section…"}</p>}><Owner key={user??"guest"} role={role} account={user} config={config} locale={locale}/></Suspense>
           )}
-          {legal && (
-            <section className="panel legal-page">
-              <h1>{page === "privacy" ? t.privacyPolicy : t.terms}</h1>
-              <p>{page === "privacy" ? t.privacyCopy : t.termsCopy}</p>
-              <p>{t.localPrivacy}</p>
-              <p>{t.searchLocationPrivacy}</p>
-              <p>{t.measurementHelp}</p>
-              <p>{t.navigateTimeHelp}</p>
-              <a
-                href="https://policies.google.com/privacy"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Google Privacy Policy
-              </a>
-              <a
-                href="https://www.google.com/help/terms_maps/"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Google Maps Terms of Service
-              </a>
-              <button className="button secondary" onClick={() => go("plan")}>
-                {t.back}
-              </button>
-            </section>
-          )}
+          {legal && <Suspense fallback={<p role="status">{locale==="ar"?"جارٍ تحميل القسم…":"Loading section…"}</p>}><PolicyPage page={page as 'privacy'|'terms'} locale={locale} onBack={()=>go('plan')}/></Suspense>}
+
         </div>
       </main>
       <nav className="bottom-nav">
@@ -1234,184 +1235,8 @@ export default function App() {
       </Modal>}
       {editingRoute && <EditSavedRoute key={editingRoute.id} route={editingRoute} locale={locale} push={push} onSave={updateRoute} onClose={()=>setEditingRoute(null)}/>}
       {deletingRoute && <DeleteSavedRoute key={deletingRoute.id} route={deletingRoute} locale={locale} onDelete={()=>deleteRoute(deletingRoute)} onClose={()=>setDeletingRoute(null)}/>}
-      {authOpen && <SignInDialog config={config} email={email} onEmail={setEmail} initialMode={authMode} linkError={accountLinkError} onClose={() => {setAuthOpen(false);setAuthMode("login");setAccountLinkError(false);}} />}
-      {passwordAccount && <PasswordDialog key={passwordAccount.id} userId={passwordAccount.id} email={passwordAccount.email} locale={locale} onClose={()=>{setPasswordAccount(null);recoveryAccount.current=null;}} onSaved={()=>{setPasswordAccount(null);recoveryAccount.current=null;setNotice(locale==="ar"?accountAr.saved:accountEn.saved);}}/>}
+      {authOpen && <Suspense fallback={<p role="status">{locale==="ar"?"جارٍ تحميل القسم…":"Loading section…"}</p>}><SignInDialog config={config} email={email} onEmail={setEmail} initialMode={authMode} linkError={accountLinkError} onClose={() => {setAuthOpen(false);setAuthMode("login");setAccountLinkError(false);}} /></Suspense>}
+      {passwordAccount && <Suspense fallback={<p role="status">{locale==="ar"?"جارٍ تحميل القسم…":"Loading section…"}</p>}><PasswordDialog key={passwordAccount.id} userId={passwordAccount.id} email={passwordAccount.email} locale={locale} onClose={()=>{setPasswordAccount(null);recoveryAccount.current=null;}} onSaved={()=>{setPasswordAccount(null);recoveryAccount.current=null;setNotice(locale==="ar"?accountAr.saved:accountEn.saved);}}/></Suspense>}
     </div>
   );
 }
-function Owner({
-  role,
-  config,
-  t,
-  onError,
-}: {
-  role: string;
-  config: AppConfig;
-  t: typeof en;
-  onError: (e: string) => void;
-}) {
-  const q = useQuery({
-    queryKey: ["admin", role],
-    enabled: role === "admin",
-    queryFn: () => api<any>("/api/admin/overview"),
-  });
-  const [monthly, setMonthly] = useState("0");
-  useEffect(() => { if (q.data) setMonthly(String(q.data.config.monthlyBudget)); }, [q.data]);
-  async function update(body: unknown) {
-    try {
-      await api("/api/admin/config", body, "PATCH");
-      await q.refetch();
-    } catch (e) {
-      onError((e as Error).message);
-    }
-  }
-  if (role !== "admin")
-    return (
-      <section className="panel empty-state">
-        <Shield size={40} />
-        <h1>{t.owner}</h1>
-        <p>{config.authConfigured ? t.needsOwner : t.ownerSetup}</p>
-      </section>
-    );
-  return (
-    <>
-      <div className="page-heading">
-        <div>
-          <h1>{t.quotaTitle}</h1>
-          <p>{t.quotaHelp}</p>
-        </div>
-      </div>
-      {q.data && (
-        <>
-          <section className="panel budget-panel">
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={q.data.config.paid}
-                onChange={(e) => update({ paid: e.target.checked })}
-              />
-              <b>{t.paid}</b>
-            </label>
-            <div>
-              <label>
-                {t.budgetUsd}
-                <input
-                  type="number"
-                  min="0"
-                  max="1000"
-                  value={monthly}
-                  onChange={(e) => setMonthly(e.target.value)}
-                />
-              </label>
-              <button
-                className="button secondary"
-                onClick={() => update({ monthlyBudget: Number(monthly) })}
-              >
-                {t.saveChanges}
-              </button>
-            </div>
-          </section>
-          <section className="panel provider-panel">
-            <table>
-              <thead>
-                <tr>
-                  <th>{t.provider}</th>
-                  <th>{t.used}</th>
-                  <th>{t.hardCap}</th>
-                  <th>{t.enabled}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(q.data.config.providers).map(
-                  ([provider, c]: [string, any]) => (
-                    <tr key={provider}>
-                      <th>{provider}</th>
-                      <td>
-                        {Object.entries(q.data.usage)
-                          .filter(([k]) => k.startsWith(`p:${provider}:`))
-                          .reduce((total, [, v]) => total + Number(v), 0)}
-                      </td>
-                      <td>
-                        <input
-                          aria-label={`${provider} ${t.hardCap}`}
-                          type="number"
-                          defaultValue={c.hard}
-                          min="0"
-                          onBlur={(e) => {
-                            if (Number(e.target.value) !== c.hard)
-                              update({
-                                provider,
-                                hard: Number(e.target.value),
-                              });
-                          }}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          aria-label={`${provider} ${t.enabled}`}
-                          type="checkbox"
-                          checked={c.enabled}
-                          onChange={(e) =>
-                            update({ provider, enabled: e.target.checked })
-                          }
-                        />
-                      </td>
-                    </tr>
-                  ),
-                )}
-              </tbody>
-            </table>
-          </section>
-          <div className="settings-grid">
-            <section className="panel">
-              <h2>{t.countryRules}</h2>
-              {Object.entries(q.data.config.countries).map(
-                ([country, primary]) => (
-                  <label key={country}>
-                    {t[country as "JO"]}
-                    <select
-                      value={String(primary)}
-                      onChange={(e) =>
-                        update({ country, primary: e.target.value })
-                      }
-                    >
-                      <option value="mapbox">Mapbox</option>
-                      <option value="google">Google</option>
-                    </select>
-                  </label>
-                ),
-              )}
-              <h2>{t.accuracy}</h2>
-              <p>{t.accuracyHelp}</p>
-            </section>
-            <section className="panel">
-              <h2>{t.audit}</h2>
-              {q.data.audit.length ? (
-                q.data.audit.slice(0, 5).map((v: any, i: number) => (
-                  <p key={i}>
-                    {new Date(v.at).toLocaleString()} ·{" "}
-                    {JSON.stringify(v.change)}
-                  </p>
-                ))
-              ) : (
-                <p>{t.noAudit}</p>
-              )}
-              <hr />
-              <h2>{t.errors}</h2>
-              {q.data.errors.length ? (
-                q.data.errors.slice(0, 5).map((v: any, i: number) => (
-                  <p key={i}>
-                    {v.code} · {new Date(v.at).toLocaleString()}
-                  </p>
-                ))
-              ) : (
-                <p>{t.noErrors}</p>
-              )}
-            </section>
-          </div>
-        </>
-      )}
-    </>
-  );
-}
-
