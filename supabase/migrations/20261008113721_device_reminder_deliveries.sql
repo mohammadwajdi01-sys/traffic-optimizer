@@ -61,8 +61,7 @@ begin
  return new;
 end $$;
 revoke all on function private.queue_reminder() from public,anon,authenticated;
-drop trigger traffic_route_reminder on public.saved_routes;
-create trigger traffic_route_reminder after insert or update of reminders,plan,days,name on public.saved_routes for each row execute function private.queue_reminder();
+create or replace trigger traffic_route_reminder after insert or update of reminders,plan,days,name on public.saved_routes for each row execute function private.queue_reminder();
 -- A browser can register at most ten endpoints; concurrent writes are serialized.
 create function private.check_push_limit() returns trigger language plpgsql security invoker set search_path='' as $$
 begin
