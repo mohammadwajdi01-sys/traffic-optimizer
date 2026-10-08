@@ -307,8 +307,9 @@ test("personal signup and reset requests stay separate from website access in En
   });
   await page.goto("/settings");await page.getByRole("button",{name:"Sign in",exact:true}).last().click();
   let modal=page.getByRole("dialog");await modal.getByRole("button",{name:"Create account",exact:true}).click();
-  await modal.getByLabel("Email address",{exact:true}).fill("fixture@example.test");await modal.getByLabel("Password",{exact:true}).fill("long-fixture-passphrase");await modal.getByLabel("Confirm password",{exact:true}).fill("long-fixture-passphrase");
-  await modal.getByRole("button",{name:"Show password",exact:true}).click();await expect(modal.getByLabel("Password",{exact:true})).toHaveAttribute("type","text");
+  await modal.getByLabel("Email address",{exact:true}).fill("fixture@example.test");await modal.getByLabel("Password",{exact:true}).fill("Valid123!");await modal.getByLabel("Confirm password",{exact:true}).fill("Valid123!");
+  await modal.getByRole("button",{name:"Show password: Password",exact:true}).click();await expect(modal.getByLabel("Password",{exact:true})).toHaveAttribute("type","text");
+  await expect(modal.getByLabel("Confirm password",{exact:true})).toHaveAttribute("type","password");await modal.getByRole("button",{name:"Show password: Confirm password",exact:true}).click();await expect(modal.getByLabel("Confirm password",{exact:true})).toHaveAttribute("type","text");
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await modal.screenshot({path:testInfo.outputPath("account-signup-en.png")});
   await modal.getByRole("button",{name:"Create account",exact:true}).click();await expect(modal.getByRole("status")).toContainText("Confirm your email before signing in");expect(requests.filter(p=>p.endsWith("/signup"))).toHaveLength(1);
   await modal.getByRole("button",{name:"Resend confirmation email",exact:true}).click();await expect.poll(()=>requests.filter(p=>p.endsWith("/resend")).length).toBe(1);
@@ -321,4 +322,13 @@ test("personal signup and reset requests stay separate from website access in En
 test("expired account callbacks remove sensitive URL context and offer a fresh link",async({page})=>{
   await page.route("**/api/config",route=>route.fulfill({json:{mode:"live",authConfigured:true,googleAuthEnabled:true,publicBeta:false,supabaseUrl:"https://account-fixture.supabase.co",supabaseKey:"sb_publishable_fixture",searchConfigured:false,trafficConfigured:false,mapConfigured:false}}));
   await page.goto("/settings#error_code=otp_expired&error_description=fixture-private-context");const modal=page.getByRole("dialog");await expect(modal.getByRole("alert")).toContainText("expired or already used");await expect(page).toHaveURL(/\/settings$/);await expect(modal.getByRole("button",{name:"Save new password",exact:true})).toHaveCount(0);await expect(modal).not.toContainText("fixture-private-context");
+});
+
+
+test("grouped Settings keeps advanced defaults optional and discards unsaved changes in both languages",async({page},testInfo)=>{
+  await page.goto("/settings");const journey=page.getByRole("region",{name:"Journey preferences",exact:true});await expect(journey).toBeVisible();await expect(page.getByRole("region",{name:"Privacy",exact:true})).toBeVisible();
+  await expect(journey.getByLabel("Safety buffer",{exact:true})).toBeHidden();await journey.getByText("Advanced journey defaults",{exact:true}).click();
+  const buffer=journey.getByLabel("Safety buffer",{exact:true});await buffer.fill("7");await journey.getByRole("button",{name:"Discard preference changes",exact:true}).click();await expect(buffer).toHaveValue("0");await buffer.fill("5");await journey.getByRole("button",{name:"Save preferences",exact:true}).click();await page.reload();await journey.getByText("Advanced journey defaults",{exact:true}).click();await expect(buffer).toHaveValue("5");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.locator(".grouped-settings").screenshot({path:testInfo.outputPath("grouped-settings-en.png")});
+  await page.getByRole("button",{name:"ع",exact:true}).click();await expect(page.locator("html")).toHaveAttribute("dir","rtl");await expect(page.getByRole("region",{name:"تفضيلات الرحلة",exact:true})).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.locator(".grouped-settings").screenshot({path:testInfo.outputPath("grouped-settings-ar.png")});
 });

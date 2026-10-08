@@ -18,6 +18,9 @@ import {mapFailure} from "../src/map-failure";
 import GuestAccess from "../src/GuestAccess";
 import SignInDialog from "../src/SignInDialog";
 import PasswordDialog from "../src/PasswordDialog";
+import SettingsPanel from "../src/SettingsPanel";
+import {validNewPassword,passwordChecks} from "../src/password-policy";
+import {api} from "../src/api";
 import {accountCallback} from "../src/account-auth";
 import {preparePrivateAccount} from "../src/private-session";
 import { displayFailure } from "../src/feedback";
@@ -442,6 +445,7 @@ describe("Application interactions without service credentials", () => {
       screen.getByLabelText("Preferred navigation"),
       "waze",
     );
+    await u.click(screen.getByText("Advanced journey defaults",{exact:true}));
     await u.clear(screen.getByLabelText("Safety buffer"));
     await u.type(screen.getByLabelText("Safety buffer"), "20");
     await u.click(screen.getByRole("button", { name: "Save preferences" }));
@@ -938,16 +942,16 @@ describe("Personal password accounts",()=>{
   function dialog(props:any={}) {configureAuth(config);return render(<SignInDialog config={config} email="person@example.test" onEmail={vi.fn()} onClose={vi.fn()} {...props}/>);}
   it("registers without role metadata, clears the password and waits for confirmation",async()=>{
     dialog();const u=userEvent.setup();await u.click(screen.getByRole("button",{name:"Create account"}));
-    await u.type(screen.getByLabelText("Password",{exact:true}),"a-long-test-phrase");await u.type(screen.getByLabelText("Confirm password"),"a-long-test-phrase");
+    await u.type(screen.getByLabelText("Password",{exact:true}),"Valid123!");await u.type(screen.getByLabelText("Confirm password"),"Valid123!");
     await u.click(screen.getByRole("button",{name:"Create account"}));
-    expect(auth.signUp).toHaveBeenCalledWith({email:"person@example.test",password:"a-long-test-phrase",options:{emailRedirectTo:location.origin+"/settings"}});
+    expect(auth.signUp).toHaveBeenCalledWith({email:"person@example.test",password:"Valid123!",options:{emailRedirectTo:location.origin+"/settings"}});
     expect((await screen.findByRole("status")).textContent).toContain("Confirm your email before signing in");
     expect(screen.queryByLabelText("Password",{exact:true})).toBeNull();expect(auth.signInWithPassword).not.toHaveBeenCalled();
     await u.click(screen.getByRole("button",{name:"Resend confirmation email"}));expect(auth.resend).toHaveBeenCalledWith({type:"signup",email:"person@example.test",options:{emailRedirectTo:location.origin+"/settings"}});
     await u.click(screen.getByRole("button",{name:"Back to sign in"}));expect((screen.getByLabelText("Password",{exact:true}) as HTMLInputElement).value).toBe("");
   });
   it("does not submit mismatched passwords",async()=>{
-    dialog();const u=userEvent.setup();await u.click(screen.getByRole("button",{name:"Create account"}));await u.type(screen.getByLabelText("Password",{exact:true}),"a-long-test-phrase");await u.type(screen.getByLabelText("Confirm password"),"different-test-phrase");await u.click(screen.getByRole("button",{name:"Create account"}));
+    dialog();const u=userEvent.setup();await u.click(screen.getByRole("button",{name:"Create account"}));await u.type(screen.getByLabelText("Password",{exact:true}),"Valid123!");await u.type(screen.getByLabelText("Confirm password"),"Different123!");await u.click(screen.getByRole("button",{name:"Create account"}));
     expect(screen.getByRole("alert").textContent).toContain("do not match");expect(auth.signUp).not.toHaveBeenCalled();
   });
   it("handles unconfirmed login and resets without disclosing whether an account exists",async()=>{
@@ -962,12 +966,12 @@ describe("Personal password accounts",()=>{
     await u.type(screen.getByLabelText("Password",{exact:true}),"old-unit-password");await u.click(screen.getByRole("button",{name:"Sign in with password"}));expect(auth.signInWithPassword).toHaveBeenCalledWith({email:"person@example.test",password:"old-unit-password"});expect(close).toHaveBeenCalledTimes(1);
   });
   it("keeps duplicate signup requests pending and shows provider failures without claiming confirmation",async()=>{
-    let done:any;auth.signUp.mockImplementationOnce(()=>new Promise(resolve=>{done=resolve;}));dialog();const u=userEvent.setup();await u.click(screen.getByRole("button",{name:"Create account"}));await u.type(screen.getByLabelText("Password",{exact:true}),"a-long-test-phrase");await u.type(screen.getByLabelText("Confirm password"),"a-long-test-phrase");
+    let done:any;auth.signUp.mockImplementationOnce(()=>new Promise(resolve=>{done=resolve;}));dialog();const u=userEvent.setup();await u.click(screen.getByRole("button",{name:"Create account"}));await u.type(screen.getByLabelText("Password",{exact:true}),"Valid123!");await u.type(screen.getByLabelText("Confirm password"),"Valid123!");
     const submit=screen.getByRole("button",{name:"Create account"});await u.click(submit);await u.click(submit);expect(auth.signUp).toHaveBeenCalledTimes(1);
     await act(async()=>done({data:{session:null},error:{code:"email_address_not_authorized"}}));expect(screen.getByRole("alert").textContent).toContain("Email could not be requested");expect(screen.queryByText(/Confirmation requested/)).toBeNull();
   });
   it("provides Arabic signup and password confirmation with appropriate autocomplete",async()=>{
-    useStore.getState().setLocale("ar");dialog();const u=userEvent.setup();await u.click(screen.getByRole("button",{name:"إنشاء حساب"}));expect(screen.getByLabelText("كلمة المرور",{exact:true}).getAttribute("autocomplete")).toBe("new-password");await u.type(screen.getByLabelText("كلمة المرور",{exact:true}),"a-long-test-phrase");await u.type(screen.getByLabelText("تأكيد كلمة المرور"),"a-long-test-phrase");await u.click(screen.getByRole("button",{name:"إنشاء حساب"}));expect((await screen.findByRole("status")).textContent).toContain("أكّد بريدك");
+    useStore.getState().setLocale("ar");dialog();const u=userEvent.setup();await u.click(screen.getByRole("button",{name:"إنشاء حساب"}));expect(screen.getByLabelText("كلمة المرور",{exact:true}).getAttribute("autocomplete")).toBe("new-password");await u.type(screen.getByLabelText("كلمة المرور",{exact:true}),"Valid123!");await u.type(screen.getByLabelText("تأكيد كلمة المرور"),"Valid123!");await u.click(screen.getByRole("button",{name:"إنشاء حساب"}));expect((await screen.findByRole("status")).textContent).toContain("أكّد بريدك");
   });
 });
 
@@ -994,11 +998,75 @@ describe("Accepted and expired recovery links",()=>{
   });
   it("saves the accepted account's password once without changing identity or roles",async()=>{
     configureAuth(config as any);auth.getSession.mockResolvedValue({data:{session:{user:{id:"account-a",email:"account-a@example.test"},access_token:"unit-only"}}} as any);
-    const saved=vi.fn();render(<PasswordDialog userId="account-a" email="account-a@example.test" locale="en" onClose={vi.fn()} onSaved={saved}/>);const u=userEvent.setup();await u.type(screen.getByLabelText("Password",{exact:true}),"new-long-test-phrase");await u.type(screen.getByLabelText("Confirm password"),"new-long-test-phrase");await u.click(screen.getByRole("button",{name:"Save new password"}));await waitFor(()=>expect(saved).toHaveBeenCalledTimes(1));expect(auth.updateUser).toHaveBeenCalledWith({password:"new-long-test-phrase"});expect(auth.signUp).not.toHaveBeenCalled();expect(auth.signOut).not.toHaveBeenCalled();
+    const saved=vi.fn();render(<PasswordDialog userId="account-a" email="account-a@example.test" locale="en" onClose={vi.fn()} onSaved={saved}/>);const u=userEvent.setup();await u.type(screen.getByLabelText("Password",{exact:true}),"NewValid8!");await u.type(screen.getByLabelText("Confirm password"),"NewValid8!");await u.click(screen.getByRole("button",{name:"Save new password"}));await waitFor(()=>expect(saved).toHaveBeenCalledTimes(1));expect(auth.updateUser).toHaveBeenCalledWith({password:"NewValid8!"});expect(auth.signUp).not.toHaveBeenCalled();expect(auth.signOut).not.toHaveBeenCalled();
   });
   it("refuses to update a different or missing account session",async()=>{
     configureAuth(config as any);auth.getSession.mockResolvedValue({data:{session:{user:{id:"account-b",email:"account-b@example.test"}}}} as any);
-    render(<PasswordDialog userId="account-a" email="account-a@example.test" locale="ar" onClose={vi.fn()} onSaved={vi.fn()}/>);const u=userEvent.setup();await u.type(screen.getByLabelText("كلمة المرور",{exact:true}),"new-long-test-phrase");await u.type(screen.getByLabelText("تأكيد كلمة المرور"),"new-long-test-phrase");await u.click(screen.getByRole("button",{name:"حفظ كلمة المرور الجديدة"}));expect((await screen.findByRole("alert")).textContent).toContain("تغيّرت جلسة حسابك");expect(auth.updateUser).not.toHaveBeenCalled();
+    render(<PasswordDialog userId="account-a" email="account-a@example.test" locale="ar" onClose={vi.fn()} onSaved={vi.fn()}/>);const u=userEvent.setup();await u.type(screen.getByLabelText("كلمة المرور",{exact:true}),"NewValid8!");await u.type(screen.getByLabelText("تأكيد كلمة المرور"),"NewValid8!");await u.click(screen.getByRole("button",{name:"حفظ كلمة المرور الجديدة"}));expect((await screen.findByRole("alert")).textContent).toContain("تغيّرت جلسة حسابك");expect(auth.updateUser).not.toHaveBeenCalled();
   });
 });
 
+
+
+describe("Password requirements and visibility",()=>{
+  it("requires eight characters and every composition rule, including a provider-supported symbol",()=>{
+    expect(validNewPassword("Abcdef1!")).toBe(true);
+    for(const weak of ["Abcd1!", "abcdef1!", "ABCDEF1!", "Abcdefg!", "Abcdef12", "Abcdef1🙂"])expect(validNewPassword(weak)).toBe(false);
+    expect(passwordChecks("Abcdef1!")).toEqual([true,true,true,true,true]);
+  });
+  it("gives each signup field an independent eye and hides it on method change",async()=>{
+    configureAuth({authConfigured:true,supabaseUrl:"https://example.supabase.co",supabaseKey:"unit-only"} as any);
+    render(<SignInDialog config={{authConfigured:true} as any} email="person@example.test" onEmail={vi.fn()} onClose={vi.fn()}/>);
+    const u=userEvent.setup();await u.click(screen.getByRole("button",{name:"Create account"}));
+    const password=screen.getByLabelText("Password",{exact:true}),confirm=screen.getByLabelText("Confirm password");
+    await u.click(screen.getByRole("button",{name:/^Show password: Password$/}));expect(password.getAttribute("type")).toBe("text");expect(confirm.getAttribute("type")).toBe("password");
+    const eye=screen.getByRole("button",{name:/^Show password: Confirm password$/});eye.focus();await u.keyboard("{Enter}");expect(confirm.getAttribute("type")).toBe("text");expect(eye.getAttribute("aria-pressed")).toBe("true");
+    await u.click(screen.getByRole("button",{name:"Back to sign in"}));expect(screen.getByLabelText("Password",{exact:true}).getAttribute("type")).toBe("password");expect(auth.signUp).not.toHaveBeenCalled();
+  });
+  it("rejects a missing symbol in both signup and accepted password recovery before contacting Auth",async()=>{
+    configureAuth({authConfigured:true,supabaseUrl:"https://example.supabase.co",supabaseKey:"unit-only"} as any);
+    const u=userEvent.setup();const signup=render(<SignInDialog config={{authConfigured:true} as any} email="person@example.test" onEmail={vi.fn()} onClose={vi.fn()}/>);
+    await u.click(screen.getByRole("button",{name:"Create account"}));await u.type(screen.getByLabelText("Password",{exact:true}),"Abcdef12");await u.type(screen.getByLabelText("Confirm password"),"Abcdef12");await u.click(screen.getByRole("button",{name:"Create account"}));expect(screen.getByRole("alert").textContent).toContain("symbol");expect(auth.signUp).not.toHaveBeenCalled();signup.unmount();
+    render(<PasswordDialog userId="account-a" email="person@example.test" locale="en" onClose={vi.fn()} onSaved={vi.fn()}/>);await u.type(screen.getByLabelText("Password",{exact:true}),"Abcdef12");await u.type(screen.getByLabelText("Confirm password"),"Abcdef12");await u.click(screen.getByRole("button",{name:"Save new password"}));expect(screen.getByRole("alert").textContent).toContain("symbol");expect(auth.updateUser).not.toHaveBeenCalled();
+  });
+});
+
+describe("Grouped settings safeguards",()=>{
+  const props={locale:"en" as const,prefs:{locale:"en" as const,navigation:"ask" as const,safety_buffer:0,measurement_opt_in:true},onPrefs:vi.fn(),signedIn:true,account:<p>Account fixture</p>,website:<p>Website fixture</p>,loading:false,failed:false,saving:false,dirty:true,onRetry:vi.fn(),onSave:vi.fn(),onCancel:vi.fn(),push:false,pushAvailable:false,onPush:vi.fn(),recordingAllowed:false,tripStart:false,onTrip:vi.fn(),onExport:vi.fn(),onClearExamples:vi.fn(),onClearLocation:vi.fn()};
+  it("keeps load failures from overwriting saved preferences and offers a retry",async()=>{
+    const retry=vi.fn();render(<SettingsPanel {...props} failed onRetry={retry}/>);const u=userEvent.setup();expect(screen.getByLabelText("Preferred navigation").matches(":disabled")).toBe(true);expect((screen.getByRole("button",{name:"Save preferences"}) as HTMLButtonElement).disabled).toBe(true);await u.click(screen.getByRole("button",{name:"Retry account preferences"}));expect(retry).toHaveBeenCalledOnce();
+  });
+  it("separates account, journey, privacy and website actions and requires saved recording consent",async()=>{
+    const cancel=vi.fn(),save=vi.fn();const view=render(<SettingsPanel {...props} onCancel={cancel} onSave={save}/>);const u=userEvent.setup();for(const name of [en.account,"Journey preferences","Notifications","Privacy","Website access"])expect(screen.getByRole("region",{name})).toBeTruthy();expect(screen.queryByRole("button",{name:"Record departure"})).toBeNull();await u.click(screen.getByRole("button",{name:"Discard preference changes"}));expect(cancel).toHaveBeenCalledOnce();await u.click(screen.getByRole("button",{name:"Save privacy preferences"}));expect(save).toHaveBeenCalledOnce();view.rerender(<SettingsPanel {...props} recordingAllowed/>);expect(screen.getByRole("button",{name:"Record departure"})).toBeTruthy();
+  });
+  it("refuses a preference write when the SDK session changed before dispatch",async()=>{
+    configureAuth({authConfigured:true,supabaseUrl:"https://example.supabase.co",supabaseKey:"unit-only"} as any);auth.getSession.mockResolvedValue({data:{session:{user:{email:"b@example.test"},access_token:"unit-only"}}} as any);const fetchMock=vi.fn();vi.stubGlobal("fetch",fetchMock);await expect(api("/api/preferences",props.prefs,"PATCH",undefined,"a@example.test")).rejects.toThrow("Account session changed");expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("Account preference save boundary",()=>{
+  it("ignores an account A save after B signs in and clears A's active trip",async()=>{
+    const config={mode:"live",authConfigured:true,googleAuthEnabled:true,publicBeta:false,supabaseUrl:"https://example.supabase.co",supabaseKey:"unit-only",searchConfigured:false,trafficConfigured:false,mapConfigured:false};
+    let owner="a@example.test",changed:any,finish:any;const session=()=>({user:{id:owner,email:owner},access_token:"unit-only"});
+    auth.getSession.mockImplementation(async()=>({data:{session:session()}} as any));auth.onAuthStateChange.mockImplementation(callback=>{changed=callback;return {data:{subscription:{unsubscribe:vi.fn()}}};});
+    localStorage.setItem("traffic.preferences",JSON.stringify({navigation:"waze",safety_buffer:55}));
+    vi.stubGlobal("fetch",vi.fn(async(path:string,options:any={})=>{
+      if(path==="/api/preferences"&&options.method==="PATCH")return new Promise(resolve=>{finish=()=>resolve({ok:true,json:async()=>({})});});
+      return {ok:true,json:async()=>path==="/api/config"?config:path==="/api/me"?{role:"user"}:path==="/api/preferences"?[{locale:"en",navigation:owner.startsWith("a")?"ask":"google",safety_buffer:0,measurement_opt_in:true}]:[]};
+    }));
+    history.replaceState(null,"","/settings");mount();const u=userEvent.setup();await waitFor(()=>expect(screen.getByLabelText("Preferred navigation").matches(":disabled")).toBe(false));await screen.findByRole("button",{name:"Record departure"});await u.click(screen.getByRole("button",{name:"Record departure"}));expect(screen.getByRole("button",{name:en.tripEnd})).toBeTruthy();
+    await u.selectOptions(screen.getByLabelText("Preferred navigation"),"waze");await u.click(screen.getByRole("button",{name:"Save preferences"}));await waitFor(()=>expect(finish).toBeTypeOf("function"));
+    owner="b@example.test";act(()=>changed("SIGNED_IN",session()));await waitFor(()=>expect((screen.getByLabelText("Preferred navigation") as HTMLInputElement).value).toBe("google"));expect(screen.getByRole("button",{name:"Record departure"})).toBeTruthy();
+    await act(async()=>finish());expect((screen.getByLabelText("Preferred navigation") as HTMLInputElement).value).toBe("google");expect(JSON.parse(localStorage.getItem("traffic.preferences")!).navigation).toBe("waze");
+  });
+});
+
+
+describe("Settings language persistence",()=>{
+  it("saves the language currently shown after changing it in the header",async()=>{
+    const config={mode:"live",authConfigured:true,googleAuthEnabled:true,supabaseUrl:"https://example.supabase.co",supabaseKey:"unit-only",searchConfigured:false,trafficConfigured:false,mapConfigured:false};let saved:any;
+    auth.getSession.mockResolvedValue({data:{session:{user:{id:"person",email:"person@example.test"},access_token:"unit-only"}}} as any);
+    vi.stubGlobal("fetch",vi.fn(async(path:string,options:any={})=>{if(path==="/api/preferences"&&options.method==="PATCH")saved=JSON.parse(options.body);return {ok:true,json:async()=>path==="/api/config"?config:path==="/api/me"?{role:"user"}:path==="/api/preferences"?[{locale:"en",navigation:"ask",safety_buffer:0,measurement_opt_in:false}]:[]};}));history.replaceState(null,"","/settings");mount();const u=userEvent.setup();await waitFor(()=>expect(screen.getByLabelText("Preferred navigation").matches(":disabled")).toBe(false));await u.click(screen.getByRole("button",{name:"ع"}));await u.click(screen.getByRole("button",{name:ar.saveSettings}));await waitFor(()=>expect(saved?.locale).toBe("ar"));expect(useStore.getState().locale).toBe("ar");
+  });
+});
