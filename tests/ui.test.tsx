@@ -5,6 +5,7 @@ import {
   screen,
   within,
   cleanup,
+  configure,
   waitFor,
   act,
 } from "@testing-library/react";
@@ -16,6 +17,8 @@ import {MapPreview} from "../src/MapPreview";
 import {mapFailure} from "../src/map-failure";
 import GuestAccess from "../src/GuestAccess";
 import SignInDialog from "../src/SignInDialog";
+import PasswordDialog from "../src/PasswordDialog";
+import {accountCallback} from "../src/account-auth";
 import {preparePrivateAccount} from "../src/private-session";
 import { displayFailure } from "../src/feedback";
 import { en, ar } from "../src/i18n";
@@ -29,6 +32,12 @@ import { demoForecast } from "../shared/demo";
 import { defaultPlan } from "../shared/demo";
 const auth = vi.hoisted(() => ({
   getSession: vi.fn(async () => ({ data: { session: null } })),
+  initialize: vi.fn(async () => ({error:null})),
+  signUp: vi.fn(async () => ({data:{session:null},error:null})),
+  signInWithPassword: vi.fn(async () => ({data:{session:null},error:null})),
+  resetPasswordForEmail: vi.fn(async () => ({error:null})),
+  resend: vi.fn(async () => ({error:null})),
+  updateUser: vi.fn(async () => ({data:{user:{id:"account-a"}},error:null})),
   signOut: vi.fn(async () => ({error:null})),
   signInWithOAuth: vi.fn(async (): Promise<{error: Error | null}> => ({ error: null })),
   signInWithOtp: vi.fn(async (): Promise<{error: Error | null}> => ({ error: null })),
@@ -46,12 +55,18 @@ vi.mock("mapbox-gl",()=>({default:{
   Marker:class {setLngLat(coords:any){mapMock.marker(coords);return this;}addTo(){return this;}remove(){mapMock.markerRemove();}},
   LngLatBounds:class {extend(){return this;}},
 }}));
+// Account startup and country options share a render; allow loaded UI under CI contention.
+configure({asyncUtilTimeout:3000});
 beforeEach(() => {
   auth.getSession.mockReset().mockResolvedValue({data:{session:null}});
   auth.onAuthStateChange.mockReset().mockImplementation((_callback:any)=>({data:{subscription:{unsubscribe:vi.fn()}}}));
   auth.signOut.mockReset().mockResolvedValue({error:null});
   auth.signInWithOAuth.mockReset().mockResolvedValue({error: null});
   auth.signInWithOtp.mockReset().mockResolvedValue({error: null});
+  auth.initialize.mockReset().mockResolvedValue({error:null});
+  for(const method of [auth.signUp,auth.signInWithPassword])method.mockReset().mockResolvedValue({data:{session:null},error:null});
+  for(const method of [auth.resetPasswordForEmail,auth.resend])method.mockReset().mockResolvedValue({error:null});
+  auth.updateUser.mockReset().mockResolvedValue({data:{user:{id:"account-a"}},error:null});
   localStorage.clear();
   useSearchLocation.getState().setContext({});
   history.replaceState(null, "", "/");
@@ -262,6 +277,7 @@ describe("Sign-in recovery after a failed human check", () => {
   it("reports email failure within the dialog without claiming the link was sent", async () => {
     auth.signInWithOtp.mockResolvedValueOnce({error:Object.assign(new Error("Email request rate limit reached"),{status:429})});
     dialog();
+    await userEvent.setup().click(screen.getByRole("button",{name:"Use an email link"}));
     await userEvent.setup().click(screen.getByRole("button",{name:"Email a sign-in link"}));
     expect((await within(screen.getByRole("dialog")).findByRole("alert")).textContent).toContain("usage limit");
     expect(screen.queryByText(/Sign-in link requested/)).toBeNull();
@@ -271,6 +287,7 @@ describe("Sign-in recovery after a failed human check", () => {
     auth.signInWithOtp.mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
     dialog();
     const u=userEvent.setup();
+    await u.click(screen.getByRole("button",{name:"Use an email link"}));
     const submit=screen.getByRole("button",{name:"Email a sign-in link"});
     await u.click(submit); await u.click(submit);
     expect(auth.signInWithOtp).toHaveBeenCalledTimes(1);
@@ -291,6 +308,7 @@ describe("Sign-in recovery after a failed human check", () => {
   });
   it("keeps email-request completion and recovery controls in Arabic", async () => {
     useStore.getState().setLocale("ar"); dialog();
+    await userEvent.setup().click(screen.getByRole("button",{name:"استخدام رابط عبر البريد"}));
     await userEvent.setup().click(screen.getByRole("button",{name:"أرسل رابط تسجيل الدخول"}));
     expect((await screen.findByRole("status")).textContent).toContain("لم يتم تسجيل دخولك بعد");
   });
@@ -914,3 +932,73 @@ describe("Safe saved-route dialogs",()=>{
    await u.click(screen.getByRole("button",{name:"حذف الرحلة"}));await waitFor(()=>expect(close).toHaveBeenCalledTimes(2));
  });
 });
+
+describe("Personal password accounts",()=>{
+  const config={mode:"live" as const,authConfigured:true,googleAuthEnabled:true,publicBeta:false,supabaseUrl:"https://example.supabase.co",supabaseKey:"unit-only",searchConfigured:false,trafficConfigured:false,mapConfigured:false};
+  function dialog(props:any={}) {configureAuth(config);return render(<SignInDialog config={config} email="person@example.test" onEmail={vi.fn()} onClose={vi.fn()} {...props}/>);}
+  it("registers without role metadata, clears the password and waits for confirmation",async()=>{
+    dialog();const u=userEvent.setup();await u.click(screen.getByRole("button",{name:"Create account"}));
+    await u.type(screen.getByLabelText("Password",{exact:true}),"a-long-test-phrase");await u.type(screen.getByLabelText("Confirm password"),"a-long-test-phrase");
+    await u.click(screen.getByRole("button",{name:"Create account"}));
+    expect(auth.signUp).toHaveBeenCalledWith({email:"person@example.test",password:"a-long-test-phrase",options:{emailRedirectTo:location.origin+"/settings"}});
+    expect((await screen.findByRole("status")).textContent).toContain("Confirm your email before signing in");
+    expect(screen.queryByLabelText("Password",{exact:true})).toBeNull();expect(auth.signInWithPassword).not.toHaveBeenCalled();
+    await u.click(screen.getByRole("button",{name:"Resend confirmation email"}));expect(auth.resend).toHaveBeenCalledWith({type:"signup",email:"person@example.test",options:{emailRedirectTo:location.origin+"/settings"}});
+    await u.click(screen.getByRole("button",{name:"Back to sign in"}));expect((screen.getByLabelText("Password",{exact:true}) as HTMLInputElement).value).toBe("");
+  });
+  it("does not submit mismatched passwords",async()=>{
+    dialog();const u=userEvent.setup();await u.click(screen.getByRole("button",{name:"Create account"}));await u.type(screen.getByLabelText("Password",{exact:true}),"a-long-test-phrase");await u.type(screen.getByLabelText("Confirm password"),"different-test-phrase");await u.click(screen.getByRole("button",{name:"Create account"}));
+    expect(screen.getByRole("alert").textContent).toContain("do not match");expect(auth.signUp).not.toHaveBeenCalled();
+  });
+  it("handles unconfirmed login and resets without disclosing whether an account exists",async()=>{
+    auth.signInWithPassword.mockResolvedValueOnce({data:{session:null},error:{code:"email_not_confirmed"}} as any);
+    dialog();const u=userEvent.setup();await u.type(screen.getByLabelText("Password",{exact:true}),"old-unit-password");await u.click(screen.getByRole("button",{name:"Sign in with password"}));
+    expect((await screen.findByRole("alert")).textContent).toContain("Confirm your email");
+    await u.click(screen.getByRole("button",{name:"Forgot password?"}));await u.click(screen.getByRole("button",{name:"Request password reset"}));
+    expect(auth.resetPasswordForEmail).toHaveBeenCalledWith("person@example.test",{redirectTo:location.origin+"/settings"});expect(screen.getByRole("status").textContent).toContain("If an account exists");
+  });
+  it("closes a successful password login but keeps Google independent of password fields",async()=>{
+    const close=vi.fn();dialog({onClose:close});const u=userEvent.setup();await u.click(screen.getByRole("button",{name:"Continue with Google"}));expect(auth.signInWithOAuth).toHaveBeenCalledWith({provider:"google",options:{redirectTo:location.origin+"/settings"}});expect(close).not.toHaveBeenCalled();
+    await u.type(screen.getByLabelText("Password",{exact:true}),"old-unit-password");await u.click(screen.getByRole("button",{name:"Sign in with password"}));expect(auth.signInWithPassword).toHaveBeenCalledWith({email:"person@example.test",password:"old-unit-password"});expect(close).toHaveBeenCalledTimes(1);
+  });
+  it("keeps duplicate signup requests pending and shows provider failures without claiming confirmation",async()=>{
+    let done:any;auth.signUp.mockImplementationOnce(()=>new Promise(resolve=>{done=resolve;}));dialog();const u=userEvent.setup();await u.click(screen.getByRole("button",{name:"Create account"}));await u.type(screen.getByLabelText("Password",{exact:true}),"a-long-test-phrase");await u.type(screen.getByLabelText("Confirm password"),"a-long-test-phrase");
+    const submit=screen.getByRole("button",{name:"Create account"});await u.click(submit);await u.click(submit);expect(auth.signUp).toHaveBeenCalledTimes(1);
+    await act(async()=>done({data:{session:null},error:{code:"email_address_not_authorized"}}));expect(screen.getByRole("alert").textContent).toContain("Email could not be requested");expect(screen.queryByText(/Confirmation requested/)).toBeNull();
+  });
+  it("provides Arabic signup and password confirmation with appropriate autocomplete",async()=>{
+    useStore.getState().setLocale("ar");dialog();const u=userEvent.setup();await u.click(screen.getByRole("button",{name:"إنشاء حساب"}));expect(screen.getByLabelText("كلمة المرور",{exact:true}).getAttribute("autocomplete")).toBe("new-password");await u.type(screen.getByLabelText("كلمة المرور",{exact:true}),"a-long-test-phrase");await u.type(screen.getByLabelText("تأكيد كلمة المرور"),"a-long-test-phrase");await u.click(screen.getByRole("button",{name:"إنشاء حساب"}));expect((await screen.findByRole("status")).textContent).toContain("أكّد بريدك");
+  });
+});
+
+describe("Accepted and expired recovery links",()=>{
+  const config={mode:"live",authConfigured:true,googleAuthEnabled:true,publicBeta:false,supabaseUrl:"https://example.supabase.co",supabaseKey:"unit-only",searchConfigured:false,trafficConfigured:false,mapConfigured:false};
+  function accountApp() {
+    vi.stubGlobal("fetch",vi.fn(async(path:string)=>({ok:true,json:async()=>path==="/api/config"?config:path==="/api/me"?{role:"user"}:[]})));
+    let changed:any;auth.onAuthStateChange.mockImplementation(callback=>{changed=callback;return {data:{subscription:{unsubscribe:vi.fn()}}};});mount();return ()=>changed;
+  }
+  it("keeps callback intent separate from authorization and provider error text",()=>{
+    expect(accountCallback("https://example.test/settings#type=recovery")).toBe("invalid");
+    expect(accountCallback("https://example.test/settings#access_token=test-only&refresh_token=test-only&type=recovery")).toBe("recovery");
+    expect(accountCallback("https://example.test/settings#error_description=raw-secret-text&error_code=otp_expired")).toBe("invalid");
+    expect(accountCallback("https://example.test/settings#type=signup")).toBe("confirmation");
+  });
+  it("offers a fresh reset for an expired link even when another valid account is signed in",async()=>{
+    history.replaceState(null,"","/settings#error_code=otp_expired&error_description=do-not-display");auth.getSession.mockResolvedValue({data:{session:{user:{id:"existing",email:"existing@example.test"},access_token:"unit-only"}}} as any);
+    accountApp();expect((await screen.findByRole("alert")).textContent).toContain("already used");expect(location.hash).toBe("");expect(screen.queryByText(/do-not-display/)).toBeNull();expect(screen.queryByRole("button",{name:"Save new password"})).toBeNull();expect(auth.updateUser).not.toHaveBeenCalled();
+  });
+  it("opens password recovery only on the accepted SDK event and closes it on account change",async()=>{
+    history.replaceState(null,"","/settings#access_token=unit-only&refresh_token=unit-only&type=recovery");const changed=accountApp();await waitFor(()=>expect(changed()).toBeTypeOf("function"));expect(screen.queryByRole("dialog",{name:"Choose a new password"})).toBeNull();
+    const session={user:{id:"account-a",email:"account-a@example.test"},access_token:"unit-only"};auth.getSession.mockResolvedValue({data:{session}} as any);act(()=>changed()("PASSWORD_RECOVERY",session));expect(await screen.findByRole("dialog",{name:"Choose a new password"})).toBeTruthy();expect(location.hash).toBe("");
+    act(()=>changed()("SIGNED_IN",{user:{id:"account-b",email:"account-b@example.test"}}));expect(screen.queryByRole("dialog",{name:"Choose a new password"})).toBeNull();expect(auth.updateUser).not.toHaveBeenCalled();
+  });
+  it("saves the accepted account's password once without changing identity or roles",async()=>{
+    configureAuth(config as any);auth.getSession.mockResolvedValue({data:{session:{user:{id:"account-a",email:"account-a@example.test"},access_token:"unit-only"}}} as any);
+    const saved=vi.fn();render(<PasswordDialog userId="account-a" email="account-a@example.test" locale="en" onClose={vi.fn()} onSaved={saved}/>);const u=userEvent.setup();await u.type(screen.getByLabelText("Password",{exact:true}),"new-long-test-phrase");await u.type(screen.getByLabelText("Confirm password"),"new-long-test-phrase");await u.click(screen.getByRole("button",{name:"Save new password"}));await waitFor(()=>expect(saved).toHaveBeenCalledTimes(1));expect(auth.updateUser).toHaveBeenCalledWith({password:"new-long-test-phrase"});expect(auth.signUp).not.toHaveBeenCalled();expect(auth.signOut).not.toHaveBeenCalled();
+  });
+  it("refuses to update a different or missing account session",async()=>{
+    configureAuth(config as any);auth.getSession.mockResolvedValue({data:{session:{user:{id:"account-b",email:"account-b@example.test"}}}} as any);
+    render(<PasswordDialog userId="account-a" email="account-a@example.test" locale="ar" onClose={vi.fn()} onSaved={vi.fn()}/>);const u=userEvent.setup();await u.type(screen.getByLabelText("كلمة المرور",{exact:true}),"new-long-test-phrase");await u.type(screen.getByLabelText("تأكيد كلمة المرور"),"new-long-test-phrase");await u.click(screen.getByRole("button",{name:"حفظ كلمة المرور الجديدة"}));expect((await screen.findByRole("alert")).textContent).toContain("تغيّرت جلسة حسابك");expect(auth.updateUser).not.toHaveBeenCalled();
+  });
+});
+

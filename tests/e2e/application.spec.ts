@@ -296,3 +296,29 @@ test("coordinate dialog supports keyboard errors, Escape and focus recovery",asy
   await expect(from).toBeFocused();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
+
+test("personal signup and reset requests stay separate from website access in English and Arabic",async({page},testInfo)=>{
+  const requests:string[]=[];
+  await page.route("**/api/config",route=>route.fulfill({json:{mode:"live",authConfigured:true,googleAuthEnabled:true,publicBeta:false,supabaseUrl:"https://account-fixture.supabase.co",supabaseKey:"sb_publishable_fixture",searchConfigured:false,trafficConfigured:false,mapConfigured:false}}));
+  await page.route("https://account-fixture.supabase.co/auth/v1/**",async route=>{
+    const path=new URL(route.request().url()).pathname;requests.push(path);
+    if(path.endsWith("/signup"))return route.fulfill({json:{user:{id:"account-fixture",email:"fixture@example.test"},session:null}});
+    return route.fulfill({json:{}});
+  });
+  await page.goto("/settings");await page.getByRole("button",{name:"Sign in",exact:true}).last().click();
+  let modal=page.getByRole("dialog");await modal.getByRole("button",{name:"Create account",exact:true}).click();
+  await modal.getByLabel("Email address",{exact:true}).fill("fixture@example.test");await modal.getByLabel("Password",{exact:true}).fill("long-fixture-passphrase");await modal.getByLabel("Confirm password",{exact:true}).fill("long-fixture-passphrase");
+  await modal.getByRole("button",{name:"Show password",exact:true}).click();await expect(modal.getByLabel("Password",{exact:true})).toHaveAttribute("type","text");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await modal.screenshot({path:testInfo.outputPath("account-signup-en.png")});
+  await modal.getByRole("button",{name:"Create account",exact:true}).click();await expect(modal.getByRole("status")).toContainText("Confirm your email before signing in");expect(requests.filter(p=>p.endsWith("/signup"))).toHaveLength(1);
+  await modal.getByRole("button",{name:"Resend confirmation email",exact:true}).click();await expect.poll(()=>requests.filter(p=>p.endsWith("/resend")).length).toBe(1);
+  await modal.getByRole("button",{name:"Back to sign in",exact:true}).click();await expect(modal.getByLabel("Password",{exact:true})).toHaveValue("");await modal.getByRole("button",{name:"Forgot password?",exact:true}).click();await modal.getByRole("button",{name:"Request password reset",exact:true}).click();await expect(modal.getByRole("status")).toContainText("If an account exists");expect(requests.filter(p=>p.endsWith("/recover"))).toHaveLength(1);
+  await modal.getByRole("button",{name:"Close",exact:true}).click();await expect(page.getByRole("button",{name:"Sign in",exact:true}).last()).toBeFocused();
+  await page.getByRole("button",{name:"ع",exact:true}).click();await page.getByRole("button",{name:"تسجيل الدخول",exact:true}).last().click();modal=page.getByRole("dialog");await modal.getByRole("button",{name:"إنشاء حساب",exact:true}).click();await expect(page.locator("html")).toHaveAttribute("dir","rtl");await expect(modal.getByLabel("كلمة المرور",{exact:true})).toHaveAttribute("autocomplete","new-password");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await modal.screenshot({path:testInfo.outputPath("account-signup-ar.png")});
+});
+
+test("expired account callbacks remove sensitive URL context and offer a fresh link",async({page})=>{
+  await page.route("**/api/config",route=>route.fulfill({json:{mode:"live",authConfigured:true,googleAuthEnabled:true,publicBeta:false,supabaseUrl:"https://account-fixture.supabase.co",supabaseKey:"sb_publishable_fixture",searchConfigured:false,trafficConfigured:false,mapConfigured:false}}));
+  await page.goto("/settings#error_code=otp_expired&error_description=fixture-private-context");const modal=page.getByRole("dialog");await expect(modal.getByRole("alert")).toContainText("expired or already used");await expect(page).toHaveURL(/\/settings$/);await expect(modal.getByRole("button",{name:"Save new password",exact:true})).toHaveCount(0);await expect(modal).not.toContainText("fixture-private-context");
+});
