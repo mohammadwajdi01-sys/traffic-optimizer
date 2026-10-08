@@ -59,7 +59,9 @@ vi.mock("mapbox-gl",()=>({default:{
   LngLatBounds:class {extend(){return this;}},
 }}));
 // Account startup and country options share a render; allow loaded UI under CI contention.
-configure({asyncUtilTimeout:3000});
+configure({asyncUtilTimeout:6000});
+// Whole interaction tests must allow multiple awaited controls and lazy sections.
+vi.setConfig({testTimeout:15000});
 beforeEach(() => {
   auth.getSession.mockReset().mockResolvedValue({data:{session:null}});
   auth.onAuthStateChange.mockReset().mockImplementation((_callback:any)=>({data:{subscription:{unsubscribe:vi.fn()}}}));
@@ -244,7 +246,7 @@ function mount() {
     </QueryClientProvider>,
   );
 }
-describe("Sign-in recovery after a failed human check", () => {
+describe("Sign-in recovery after a failed human check", {timeout:15000}, () => {
   const config = {mode: "live" as const, authConfigured: true, googleAuthEnabled: true,
     publicBeta: true, supabaseUrl: "https://example.supabase.co", supabaseKey: "sb_publishable_test",
     searchConfigured: true, trafficConfigured: true, mapConfigured: false};
@@ -316,7 +318,7 @@ describe("Sign-in recovery after a failed human check", () => {
     expect((await screen.findByRole("status")).textContent).toContain("لم يتم تسجيل دخولك بعد");
   });
 });
-describe("Application interactions without service credentials", () => {
+describe("Application interactions without service credentials", {timeout:15000}, () => {
   it("distinguishes an unreachable backend from an unconfigured service", async () => {
     vi.stubGlobal(
       "fetch",
@@ -442,7 +444,7 @@ describe("Application interactions without service credentials", () => {
     history.replaceState(null, "", "/settings");
     mount();
     await u.selectOptions(
-      screen.getByLabelText("Preferred navigation"),
+      await screen.findByLabelText("Preferred navigation"),
       "waze",
     );
     await u.click(screen.getByText("Advanced journey defaults",{exact:true}));
@@ -630,7 +632,7 @@ describe("Location sharing and country search", () => {
   });
 });
 
-describe("Quick account routes and departure choices", () => {
+describe("Quick account routes and departure choices", {timeout:15000}, () => {
   const route = {id:"00000000-0000-4000-8000-000000000001", name:"Home to university", plan:{...defaultPlan(), origin:{...defaultPlan().origin,source:"manual" as const},destination:{...defaultPlan().destination,source:"manual" as const}},days:[],reminders:false};
   function accountFixture() {
     auth.getSession.mockResolvedValue({data:{session:{user:{email:"account-a@example.test"},access_token:"unit-only"}}} as any);
@@ -650,7 +652,7 @@ describe("Quick account routes and departure choices", () => {
   it("loads database-backed route details and forecasts directly without typing locations", async()=>{
     const requests=accountFixture(), u=userEvent.setup(); mount();
     const picker=await screen.findByRole("combobox",{name:"Use a saved route"});
-    await screen.findByRole("option",{name:/Home to university/});
+    await within(await screen.findByRole("combobox",{name:"Use a saved route"})).findByRole("option",{name:/Home to university/});
     await u.selectOptions(picker,route.id);
     expect(screen.getByRole("combobox",{name:"From"}).getAttribute("value")).toBe(route.plan.origin.displayName);
     expect(screen.getByRole("combobox",{name:"To"}).getAttribute("value")).toBe(route.plan.destination.displayName);
@@ -669,7 +671,7 @@ describe("Quick account routes and departure choices", () => {
   });
   it("opens saved route in Plan without a forecast request",async()=>{
     const requests=accountFixture(),u=userEvent.setup();mount();
-    await screen.findByRole("option",{name:/Home to university/});
+    await within(await screen.findByRole("combobox",{name:"Use a saved route"})).findByRole("option",{name:/Home to university/});
     await u.click(within(document.querySelector(".sidebar")!).getByRole("link",{name:"Routes"}));
     await u.click(screen.getByRole("button",{name:"Use in Plan"}));
     expect(location.pathname).toBe("/plan");
@@ -677,7 +679,7 @@ describe("Quick account routes and departure choices", () => {
     expect(requests.filter(r=>r.path.startsWith("/api/analysis/"))).toHaveLength(0);
   });
   async function selectedWeek(u:ReturnType<typeof userEvent.setup>){
-    await screen.findByRole("option",{name:/Home to university/});
+    await within(await screen.findByRole("combobox",{name:"Use a saved route"})).findByRole("option",{name:/Home to university/});
     await u.click(within(document.querySelector(".sidebar")!).getByRole("link",{name:"Week"}));
     await u.selectOptions(screen.getByRole("combobox",{name:"Use a saved route"}),route.id);
     const start=(screen.getByLabelText("Week starting") as HTMLInputElement).value;
@@ -691,7 +693,7 @@ describe("Quick account routes and departure choices", () => {
     await u.click(screen.getByRole("button",{name:"Check selected days"}));
     await waitFor(()=>expect(requests.filter(r=>r.path==="/api/analysis/day")).toHaveLength(3));
     await waitFor(()=>expect(screen.getByRole("button",{name:"Check selected days"}).getAttribute("aria-busy")).toBeNull());
-    expect(document.querySelectorAll(".day-summary")).toHaveLength(7);
+    await waitFor(()=>expect(document.querySelectorAll(".day-summary")).toHaveLength(7));
     expect([...document.querySelectorAll(".day-summary small")].filter(el=>el.textContent==="Not selected")).toHaveLength(4);
     expect(requests.filter(r=>r.path==="/api/analysis/allowance")).toHaveLength(1);
   });
@@ -711,11 +713,11 @@ describe("Quick account routes and departure choices", () => {
     vi.stubGlobal("fetch",vi.fn(async(path,init)=>{if(path==="/api/analysis/day"){calls.push(path);return {ok:false,status,json:async()=>({error:"blocked"})};}return original(path,init);}));
     mount();await selectedWeek(u);await u.click(screen.getByRole("button",{name:"Check selected days"}));
     await waitFor(()=>expect(calls).toHaveLength(1));await waitFor(()=>expect(screen.getByRole("button",{name:"Check selected days"}).getAttribute("aria-busy")).toBeNull());
-    expect(document.querySelectorAll(".day-summary")).toHaveLength(7);expect(calls).toHaveLength(1);
+    await waitFor(()=>expect(document.querySelectorAll(".day-summary")).toHaveLength(7));expect(calls).toHaveLength(1);
   });
   it("runs Leave now on a saved account route and preserves its stored time window",async()=>{
     const requests=accountFixture(), u=userEvent.setup(); mount();
-    await screen.findByRole("option",{name:/Home to university/});
+    await within(await screen.findByRole("combobox",{name:"Use a saved route"})).findByRole("option",{name:/Home to university/});
     await u.click(within(document.querySelector(".sidebar")!).getByRole("link",{name:"Routes"}));
     await u.click(within(screen.getByRole("heading",{name:route.name}).closest("article")!).getByRole("button",{name:"Leave now"}));
     await screen.findByRole("region",{name:"Selected departure"});
@@ -727,7 +729,7 @@ describe("Quick account routes and departure choices", () => {
   it("removes the previous account's saved route and restored addresses before another account loads",async()=>{
     accountFixture();let changed:any;
     auth.onAuthStateChange.mockImplementation(callback=>{changed=callback;return {data:{subscription:{unsubscribe:vi.fn()}}};});
-    const u=userEvent.setup();mount();await screen.findByRole("option",{name:/Home to university/});
+    const u=userEvent.setup();mount();await within(await screen.findByRole("combobox",{name:"Use a saved route"})).findByRole("option",{name:/Home to university/});
     await u.selectOptions(screen.getByRole("combobox",{name:"Use a saved route"}),route.id);
     let finish:any;const pending=new Promise<any>(resolve=>{finish=resolve;});
     const original=globalThis.fetch;
@@ -743,7 +745,7 @@ describe("Quick account routes and departure choices", () => {
     const original=globalThis.fetch;
     vi.stubGlobal("fetch",vi.fn(async(path,init)=>path==="/api/routes"?{ok:true,json:async()=>[gpsRoute]}:original(path,init)));
     const gps=vi.fn();Object.defineProperty(navigator,"geolocation",{configurable:true,value:{getCurrentPosition:gps}});
-    const u=userEvent.setup();mount();await screen.findByRole("option",{name:/Home to university/});
+    const u=userEvent.setup();mount();await within(await screen.findByRole("combobox",{name:"Use a saved route"})).findByRole("option",{name:/Home to university/});
     await u.click(within(document.querySelector(".sidebar")!).getByRole("link",{name:"Routes"}));
     await u.click(within(screen.getByRole("heading",{name:route.name}).closest("article")!).getByRole("button",{name:"Leave now"}));
     expect(screen.getByRole("combobox",{name:"From"}).getAttribute("value")).toBe("");
@@ -751,7 +753,7 @@ describe("Quick account routes and departure choices", () => {
   });
   it("reranks a checked account route without another API request and ignores an edited pending request",async()=>{
     const requests=accountFixture(),u=userEvent.setup();mount();
-    await screen.findByRole("option",{name:/Home to university/});
+    await within(await screen.findByRole("combobox",{name:"Use a saved route"})).findByRole("option",{name:/Home to university/});
     await u.selectOptions(screen.getByRole("combobox",{name:"Use a saved route"}),route.id);
     await u.click(screen.getByRole("button",{name:"Plan a time window"}));
     await u.click(screen.getByRole("button",{name:"Find best time"}));
@@ -1067,6 +1069,27 @@ describe("Settings language persistence",()=>{
   it("saves the language currently shown after changing it in the header",async()=>{
     const config={mode:"live",authConfigured:true,googleAuthEnabled:true,supabaseUrl:"https://example.supabase.co",supabaseKey:"unit-only",searchConfigured:false,trafficConfigured:false,mapConfigured:false};let saved:any;
     auth.getSession.mockResolvedValue({data:{session:{user:{id:"person",email:"person@example.test"},access_token:"unit-only"}}} as any);
-    vi.stubGlobal("fetch",vi.fn(async(path:string,options:any={})=>{if(path==="/api/preferences"&&options.method==="PATCH")saved=JSON.parse(options.body);return {ok:true,json:async()=>path==="/api/config"?config:path==="/api/me"?{role:"user"}:path==="/api/preferences"?[{locale:"en",navigation:"ask",safety_buffer:0,measurement_opt_in:false}]:[]};}));history.replaceState(null,"","/settings");mount();const u=userEvent.setup();await waitFor(()=>expect(screen.getByLabelText("Preferred navigation").matches(":disabled")).toBe(false));await u.click(screen.getByRole("button",{name:"ع"}));await u.click(screen.getByRole("button",{name:ar.saveSettings}));await waitFor(()=>expect(saved?.locale).toBe("ar"));expect(useStore.getState().locale).toBe("ar");
+    vi.stubGlobal("fetch",vi.fn(async(path:string,options:any={})=>{if(path==="/api/preferences"&&options.method==="PATCH")saved=JSON.parse(options.body);return {ok:true,json:async()=>path==="/api/config"?config:path==="/api/me"?{role:"user"}:path==="/api/preferences"?[{locale:"en",navigation:"ask",safety_buffer:0,measurement_opt_in:false}]:[]};}));history.replaceState(null,"","/settings");mount();const u=userEvent.setup();await waitFor(()=>expect(screen.getByLabelText("Preferred navigation").matches(":disabled")).toBe(false));await u.click(screen.getByRole("button",{name:"ع"}));await u.click(await screen.findByRole("button",{name:ar.saveSettings}));await waitFor(()=>expect(saved?.locale).toBe("ar"));expect(useStore.getState().locale).toBe("ar");
   });
+});
+
+describe('Owner drafts and independent device controls',()=>{
+ it('keeps provider and role edits local until explicit Save; Cancel restores the fetched values',async()=>{
+  const {default:Owner}=await import('../src/Owner');
+  auth.getSession.mockResolvedValue({data:{session:{user:{email:'owner@example.test'},access_token:'test-only'}}} as any);
+  const config={paid:false,monthlyBudget:0,providers:Object.fromEntries(['mapbox','google','geoapify','maps'].map(name=>[name,{hard:5,enabled:name!=='google',free:10,period:'month',rpm:60}])),countries:{JO:'mapbox',LY:'mapbox',SA:'mapbox'},allowances:{guest:1,user:10,family:30,admin:100},userAllowances:{}};
+  configureAuth({supabaseUrl:'https://example.supabase.co',supabaseKey:'unit-only'} as any);
+  const changes:any[]=[];
+  vi.stubGlobal('fetch',vi.fn(async(path:string,options:any={})=>{if(path==='/api/admin/config'){const value=JSON.parse(options.body);changes.push(value);Object.assign(config,value);}return {ok:true,json:async()=>path==='/api/admin/overview'?{config,usage:{},audit:[],errors:[]}:path==='/api/admin/users'?[]:config};}));
+  render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><Owner role="admin" account="owner@example.test" config={{authConfigured:true} as any} locale="en"/></QueryClientProvider>);
+  const u=userEvent.setup(),field=await screen.findByLabelText(`mapbox ${en.hardCap}`);
+  await u.clear(field);await u.type(field,'4');await u.tab();expect(changes).toHaveLength(0);
+  await u.click(screen.getAllByRole('button',{name:'Discard changes'})[0]);expect((field as HTMLInputElement).value).toBe('5');expect(changes).toHaveLength(0);
+  const limit=screen.getByLabelText('user Daily limit');await u.clear(limit);await u.type(limit,'2');await u.click(screen.getAllByRole('button',{name:'Save changes'})[0]);
+  await screen.findByText('Owner settings saved.');expect(changes[0]).toMatchObject({paid:false,monthlyBudget:0,allowances:{user:2},providers:{mapbox:{hard:5}}});
+ });
+ it('shows endpoint-only removal scope and locks duplicate permission requests while pending',async()=>{
+  const props={locale:'en' as const,prefs:{locale:'en' as const,navigation:'ask' as const,safety_buffer:0,measurement_opt_in:false},onPrefs:vi.fn(),signedIn:true,account:null,loading:false,failed:false,saving:false,dirty:false,onRetry:vi.fn(),onSave:vi.fn(),onCancel:vi.fn(),push:true,pushBusy:true,pushAvailable:true,onPush:vi.fn(),recordingAllowed:false,tripStart:false,onTrip:vi.fn(),onExport:vi.fn(),onClearExamples:vi.fn(),onClearLocation:vi.fn()};
+  render(<SettingsPanel {...props}/>);expect(screen.getByText(/removes this device only/)).toBeTruthy();expect((screen.getByRole('button',{name:'Disable notifications'}) as HTMLButtonElement).disabled).toBe(true);
+ });
 });

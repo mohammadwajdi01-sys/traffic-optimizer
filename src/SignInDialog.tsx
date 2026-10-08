@@ -9,8 +9,8 @@ import {validNewPassword} from "./password-policy";
 import { useStore } from "./store";
 import {Button, FieldError, Modal, Notice, Pending} from "./feedback";
 export type AccountMode = "login" | "signup" | "forgot" | "link" | "confirm";
-export default function SignInDialog({config,email,onEmail,onClose,initialMode="login",linkError=false}: {
-  config:AppConfig; email:string; onEmail:(email:string)=>void; onClose:()=>void; initialMode?:AccountMode; linkError?:boolean;
+export default function SignInDialog({config,email,onEmail,onClose,initialMode="login",linkError=false,focusTarget}: {
+  config:AppConfig; email:string; onEmail:(email:string)=>void; onClose:()=>void; initialMode?:AccountMode; linkError?:boolean; focusTarget?:()=>HTMLElement|null;
 }) {
   const locale=useStore(s=>s.locale), t=locale==="ar"?ar:en, a=locale==="ar"?accountAr:accountEn;
   const [mode,setMode]=useState<AccountMode>(initialMode), [password,setPassword]=useState(""), [confirm,setConfirm]=useState("");
@@ -51,7 +51,7 @@ export default function SignInDialog({config,email,onEmail,onClose,initialMode="
   }
   const title=mode==="signup"?a.signup:mode==="forgot"?a.reset:mode==="confirm"?a.resend:t.signin;
   const action=mode==="login"?a.login:mode==="signup"?a.signup:mode==="forgot"?a.reset:mode==="confirm"?a.resend:t.sendLink;
-  return <Modal title={title} description={config.authConfigured?a.help:t.authSetup} closeLabel={t.close} onClose={onClose} busy={busy}>
+  return <Modal title={title} description={config.authConfigured?a.help:t.authSetup} closeLabel={t.close} onClose={onClose} busy={busy} focusTarget={focusTarget}>
     <FieldError id="signin-error">{error}</FieldError>{busy&&<Pending>{t.signingIn}</Pending>}{sent&&<Notice kind="success">{sent}</Notice>}
     {config.authConfigured&&config.googleAuthEnabled&&<Button className="button primary full" type="button" disabled={busy} onClick={()=>void submit("google")}>{t.signinGoogle}</Button>}
     {config.authConfigured&&<>

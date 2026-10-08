@@ -12,12 +12,13 @@ self.addEventListener("push", (event) => {
   try {
     data = { ...data, ...event.data.json() };
   } catch {}
+  if(data.expiresAt && Date.parse(data.expiresAt)<=Date.now())return;
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
       icon: "/icon-192.png",
       badge: "/icon-192.png",
-      tag: "traffic-journey",
+      tag: data.tag || "traffic-journey",
       data: { url: data.url },
       requireInteraction: false,
     }),
@@ -38,8 +39,7 @@ self.addEventListener("notificationclick", (event) => {
           (c) => new URL(c.url).origin === url.origin,
         );
         if (client) {
-          client.navigate(url.href);
-          return client.focus();
+          return client.navigate(url.href).then(updated => (updated || client).focus());
         }
         return self.clients.openWindow(url.href);
       }),

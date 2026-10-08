@@ -11,6 +11,8 @@ export type ProviderConfig = {
   rpm: number;
 };
 export const defaults = {
+  allowances: {guest:1,user:10,family:30,admin:100},
+  userAllowances: {} as Record<string,number>,
   paid: false,
   monthlyBudget: 0,
   providers: {
@@ -67,6 +69,8 @@ export class BudgetLedger extends DurableObject<Env> {
     return this.ctx.storage.transaction(async (tx) => {
       const cfg =
         (await tx.get<typeof defaults>("config")) ?? structuredClone(defaults);
+      cfg.allowances ??= {guest:1,user:10,family:30,admin:100};
+      cfg.userAllowances ??= {};
       const reply = (value: unknown, status = 200) =>
         Response.json(value, { status });
       if (path === "/status") {
@@ -109,6 +113,11 @@ export class BudgetLedger extends DurableObject<Env> {
         return reply({ ok: true });
       }
       if (path === "/update") {
+        if(data.allowances)cfg.allowances={...cfg.allowances,...data.allowances};
+        if(data.userAllowance){if(data.userAllowance.limit===null)delete cfg.userAllowances[data.userAllowance.userId];else cfg.userAllowances[data.userAllowance.userId]=data.userAllowance.limit;}
+        if(data.providers)for(const [name,value] of Object.entries(data.providers))if(Object.hasOwn(cfg.providers,name))Object.assign(cfg.providers[name as ProviderName],value);
+        if(data.countries)Object.assign(cfg.countries,data.countries);
+
         if (typeof data.paid === "boolean") cfg.paid = data.paid;
         if (
           typeof data.monthlyBudget === "number" &&
@@ -145,10 +154,7 @@ export class BudgetLedger extends DurableObject<Env> {
       if (path === "/analysis" || path === "/allowance") {
         const key = `u:${day}:${data.user}`,
           used = (await tx.get<number>(key)) ?? 0;
-        const limit =
-          { guest: 1, user: 10, family: 30, admin: 100 }[
-            data.role as "guest"
-          ] ?? 1;
+        const limit = data.role!=='guest' && Object.hasOwn(cfg.userAllowances,data.user) ? cfg.userAllowances[data.user] : cfg.allowances[data.role as keyof typeof cfg.allowances] ?? 1;
         if (path === "/allowance")
           return reply({ used, limit, remaining: Math.max(0, limit - used) });
         if (used >= limit)

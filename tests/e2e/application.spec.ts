@@ -305,7 +305,7 @@ test("personal signup and reset requests stay separate from website access in En
     if(path.endsWith("/signup"))return route.fulfill({json:{user:{id:"account-fixture",email:"fixture@example.test"},session:null}});
     return route.fulfill({json:{}});
   });
-  await page.goto("/settings");await page.getByRole("button",{name:"Sign in",exact:true}).last().click();
+  await page.goto("/settings");const accountSection=page.locator('section[aria-labelledby="settings-account"]');await accountSection.getByRole("button",{name:"Sign in",exact:true}).click();
   let modal=page.getByRole("dialog");await modal.getByRole("button",{name:"Create account",exact:true}).click();
   await modal.getByLabel("Email address",{exact:true}).fill("fixture@example.test");await modal.getByLabel("Password",{exact:true}).fill("Valid123!");await modal.getByLabel("Confirm password",{exact:true}).fill("Valid123!");
   await modal.getByRole("button",{name:"Show password: Password",exact:true}).click();await expect(modal.getByLabel("Password",{exact:true})).toHaveAttribute("type","text");
@@ -314,8 +314,8 @@ test("personal signup and reset requests stay separate from website access in En
   await modal.getByRole("button",{name:"Create account",exact:true}).click();await expect(modal.getByRole("status")).toContainText("Confirm your email before signing in");expect(requests.filter(p=>p.endsWith("/signup"))).toHaveLength(1);
   await modal.getByRole("button",{name:"Resend confirmation email",exact:true}).click();await expect.poll(()=>requests.filter(p=>p.endsWith("/resend")).length).toBe(1);
   await modal.getByRole("button",{name:"Back to sign in",exact:true}).click();await expect(modal.getByLabel("Password",{exact:true})).toHaveValue("");await modal.getByRole("button",{name:"Forgot password?",exact:true}).click();await modal.getByRole("button",{name:"Request password reset",exact:true}).click();await expect(modal.getByRole("status")).toContainText("If an account exists");expect(requests.filter(p=>p.endsWith("/recover"))).toHaveLength(1);
-  await modal.getByRole("button",{name:"Close",exact:true}).click();await expect(page.getByRole("button",{name:"Sign in",exact:true}).last()).toBeFocused();
-  await page.getByRole("button",{name:"ع",exact:true}).click();await page.getByRole("button",{name:"تسجيل الدخول",exact:true}).last().click();modal=page.getByRole("dialog");await modal.getByRole("button",{name:"إنشاء حساب",exact:true}).click();await expect(page.locator("html")).toHaveAttribute("dir","rtl");await expect(modal.getByLabel("كلمة المرور",{exact:true})).toHaveAttribute("autocomplete","new-password");
+  await modal.getByRole("button",{name:"Close",exact:true}).click();await expect(accountSection.getByRole("button",{name:"Sign in",exact:true})).toBeFocused();
+  await page.getByRole("button",{name:"ع",exact:true}).click();await accountSection.getByRole("button",{name:"تسجيل الدخول",exact:true}).click();modal=page.getByRole("dialog");await modal.getByRole("button",{name:"إنشاء حساب",exact:true}).click();await expect(page.locator("html")).toHaveAttribute("dir","rtl");await expect(modal.getByLabel("كلمة المرور",{exact:true})).toHaveAttribute("autocomplete","new-password");
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await modal.screenshot({path:testInfo.outputPath("account-signup-ar.png")});
 });
 
@@ -331,4 +331,29 @@ test("grouped Settings keeps advanced defaults optional and discards unsaved cha
   const buffer=journey.getByLabel("Safety buffer",{exact:true});await buffer.fill("7");await journey.getByRole("button",{name:"Discard preference changes",exact:true}).click();await expect(buffer).toHaveValue("0");await buffer.fill("5");await journey.getByRole("button",{name:"Save preferences",exact:true}).click();await page.reload();await journey.getByText("Advanced journey defaults",{exact:true}).click();await expect(buffer).toHaveValue("5");
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.locator(".grouped-settings").screenshot({path:testInfo.outputPath("grouped-settings-en.png")});
   await page.getByRole("button",{name:"ع",exact:true}).click();await expect(page.locator("html")).toHaveAttribute("dir","rtl");await expect(page.getByRole("region",{name:"تفضيلات الرحلة",exact:true})).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.locator(".grouped-settings").screenshot({path:testInfo.outputPath("grouped-settings-ar.png")});
+});
+
+test('owner drafts require Save and Cancel restores caps across English and Arabic',async({page},testInfo)=>{
+ const account={id:'11111111-1111-4111-8111-111111111111',email:'owner@example.test'};
+ const cfg={paid:false,monthlyBudget:0,providers:Object.fromEntries(['mapbox','google','geoapify','maps'].map(name=>[name,{hard:5,enabled:name!=='google',free:10,period:'month',rpm:60}])),countries:{JO:'mapbox',LY:'mapbox',SA:'mapbox'},allowances:{guest:1,user:10,family:30,admin:100},userAllowances:{}};
+ const changes:any[]=[];
+ await page.addInitScript(({account})=>{const exp=Math.floor(Date.now()/1000)+3600;const token=btoa(JSON.stringify({alg:'HS256',typ:'JWT'}))+'.'+btoa(JSON.stringify({sub:account.id,exp}))+'.fixture';localStorage.setItem('sb-owner-fixture-auth-token',JSON.stringify({access_token:token,refresh_token:'fixture',token_type:'bearer',expires_at:exp,user:account}));},{account});
+ await page.route('https://owner-fixture.supabase.co/auth/v1/**',route=>route.fulfill({json:account}));
+ await page.route('**/api/**',async route=>{
+  const path=new URL(route.request().url()).pathname;
+  if(path==='/api/admin/config'){const value=route.request().postDataJSON();changes.push(value);Object.assign(cfg,value);return route.fulfill({json:cfg});}
+  return route.fulfill({json:path==='/api/config'?{mode:'live',authConfigured:true,publicBeta:false,supabaseUrl:'https://owner-fixture.supabase.co',supabaseKey:'sb_publishable_fixture',searchConfigured:false,trafficConfigured:false,mapConfigured:false}:path==='/api/me'?{role:'admin'}:path==='/api/admin/overview'?{config:cfg,usage:{},audit:[],errors:[]}:path==='/api/admin/users'?[account]:[]});
+ });
+ await page.goto('/admin');const field=page.getByLabel('mapbox Hard cap');await expect(field).toHaveValue('5');await field.fill('4');await field.blur();expect(changes).toHaveLength(0);
+ await page.getByRole('button',{name:'Discard changes',exact:true}).first().click();await expect(field).toHaveValue('5');
+ await page.getByLabel('user Daily limit').fill('2');await page.getByRole('button',{name:'Save changes',exact:true}).first().click();await expect(page.getByText('Owner settings saved.',{exact:true})).toBeVisible();expect(changes[0]).toMatchObject({paid:false,monthlyBudget:0,allowances:{user:2},providers:{mapbox:{hard:5}}});
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.locator('.main').screenshot({path:testInfo.outputPath('owner-en.png')});
+ await page.getByRole('button',{name:'ع',exact:true}).click();await expect(page.getByLabel('user الحد اليومي')).toHaveValue('2');expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.locator('.main').screenshot({path:testInfo.outputPath('owner-ar.png')});
+});
+
+test('policy pages describe current retention and reminder limits and support keyboard bypass',async({page})=>{
+ await page.goto('/privacy');await expect(page.getByRole('heading',{name:'Retention and deletion'})).toBeVisible();await expect(page.locator('.legal-page')).toContainText('30 days');
+ await page.keyboard.press('Tab');await expect(page.getByRole('link',{name:'Skip to main content'})).toBeFocused();await page.keyboard.press('Enter');await expect(page.locator('#main-content')).toBeFocused();
+ await page.getByRole('button',{name:'ع',exact:true}).click();await expect(page.getByRole('heading',{name:'الاحتفاظ والحذف'})).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.goto('/terms');await expect(page.locator('.legal-page')).toContainText('كل عشر دقائق');
 });

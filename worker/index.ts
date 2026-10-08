@@ -1,3 +1,4 @@
+import {reminderEligible,reminderTiming} from "../shared/reminders";
 import { z } from "zod";
 import { planSchema, routeSchema } from "../shared/schema";
 import { optimize } from "../shared/optimizer";
@@ -5,7 +6,7 @@ import { liveWindow } from "../shared/planning";
 import { ApiError, budget, type Env } from "./env";
 import { db, identity } from "./database";
 import { createForecast, normalizeGeoapify, remote } from "./providers";
-import { scheduledReminders } from "./notifications";
+import { scheduledReminders, queueOccurrence } from "./notifications";
 import { createGuestSession, verifyGuestSession } from "./guest";
 import { countryCode, locationQuery, locationSearchSchema } from "../shared/location-search";
 import { privateAccess, privateResponse, privateSessionId } from "./private-access";
@@ -116,6 +117,7 @@ async function api(request: Request, env: Env) {
       path.startsWith("/api/routes") ||
       path.includes("preferences") ||
       path.includes("push") ||
+      path.startsWith("/api/reminders") ||
       path.includes("trips"),
   );
   await budget(env, "/rate", { user: who.id });
@@ -274,9 +276,34 @@ async function api(request: Request, env: Env) {
       }),
     );
   }
+  const reminder=path.match(/^\/api\/reminders\/([0-9a-f-]{36})$/);
+  if(path==="/api/reminders" && request.method==="GET")return reply(await db(env,`reminder_deliveries?user_id=eq.${who.id}&select=id,plan,candidate,locale,status,due_at,expires_at&order=due_at.desc&limit=30`,{token:who.token}));
+  if(reminder && request.method==="GET") {
+    const rows=await db(env,`reminder_deliveries?id=eq.${reminder[1]}&user_id=eq.${who.id}&select=id,plan,candidate,locale,status,expires_at,created_at`,{token:who.token}) as any[];
+    if(!rows.length)throw new ApiError(404,"Reminder not available for this account.");
+    return reply(rows[0]);
+  }
+  if(reminder && request.method==="DELETE") {
+    await db(env,`reminder_deliveries?id=eq.${reminder[1]}&user_id=eq.${who.id}&status=eq.pending`,{method:'PATCH',service:true,body:{status:'cancelled'}});
+    return reply({ok:true});
+  }
+  if(path==="/api/reminders" && request.method==="POST") {
+    const input=z.object({plan:planSchema,candidate:z.object({departureAt:z.string().datetime(),arrivalAt:z.string().datetime(),durationSeconds:z.number().int().min(1).max(86400),distanceMeters:z.number().min(0),provider:z.enum(['mapbox','google']),trafficCoverage:z.enum(['available','partial','unknown'])}),locale:z.enum(['en','ar']),leadMinutes:z.number().int().min(15).max(120)}).parse(await body(request));
+    if(!reminderEligible(input.plan,input.candidate))throw new ApiError(400,"This journey cannot receive a traffic reminder yet.");
+    if(Math.abs(Date.parse(input.candidate.arrivalAt)-Date.parse(input.candidate.departureAt)-input.candidate.durationSeconds*1000)>2000)throw new ApiError(400,"Check the selected journey timing.");
+    try {reminderTiming(input.candidate,input.leadMinutes);}catch {throw new ApiError(400,"Choose a future departure within seven days.");}
+    const devices=await db(env,`push_devices?user_id=eq.${who.id}&select=id,subscription&limit=10`,{token:who.token}) as any[];
+    if(!devices.length)throw new ApiError(400,"Enable notifications on a device first.");
+    const pending=await db(env,`reminder_deliveries?user_id=eq.${who.id}&status=eq.pending&select=id&limit=101`,{token:who.token}) as any[];
+    if(pending.length+devices.length>100)throw new ApiError(429,"Cancel an existing reminder before adding more.");
+    const {turnstileToken:_,...clean}=input.plan;
+    const key=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([clean.origin.latitude,clean.origin.longitude,clean.destination.latitude,clean.destination.longitude,input.candidate.departureAt])))),b=>b.toString(16).padStart(2,'0')).join('');
+    await queueOccurrence(env,who.id,devices,clean,input.candidate,input.locale,input.leadMinutes,`selected:${key}`,undefined,true);
+    return reply({ok:true},201);
+  }
   if (path === "/api/push/status" && request.method === "POST") {
     const {endpoint} = z.object({endpoint: z.string().url().max(2048)}).parse(await body(request));
-    const rows = await db(env, `push_subscriptions?user_id=eq.${who.id}&select=subscription&limit=1`, {token: who.token}) as {subscription: {endpoint: string}}[];
+    const rows = await db(env, `push_devices?user_id=eq.${who.id}&subscription->>endpoint=eq.${encodeURIComponent(endpoint)}&select=subscription&limit=1`, {token: who.token}) as {subscription: {endpoint: string}}[];
     return reply({subscribed: rows.some(row => row.subscription.endpoint === endpoint)});
   }
   if (path === "/api/push" && request.method === "POST") {
@@ -299,7 +326,10 @@ async function api(request: Request, env: Env) {
       ].some((h) => host === h || host.endsWith("." + h))
     )
       throw new ApiError(400, "This push service is not supported.");
-    const saved = await db(env, "push_subscriptions?on_conflict=user_id", {
+    // An explicitly enabled browser endpoint belongs to the current account only.
+    await db(env,`push_devices?user_id=neq.${who.id}&subscription->>endpoint=eq.${encodeURIComponent(input.endpoint)}`,{method:'DELETE',service:true});
+    await db(env,`push_subscriptions?user_id=neq.${who.id}&subscription->>endpoint=eq.${encodeURIComponent(input.endpoint)}`,{method:'DELETE',service:true});
+    const saved = await db(env, "push_devices?on_conflict=user_id,endpoint_key", {
       method: "POST", body: {user_id: who.id, subscription: input}, token: who.token,
     });
     await db(env, `notification_jobs?user_id=eq.${who.id}`, {method: "PATCH", body: {next_attempt_at: new Date().toISOString()}, service: true});
@@ -307,10 +337,12 @@ async function api(request: Request, env: Env) {
   }
 
   if (path === "/api/push" && request.method === "DELETE") {
-    await db(env, `push_subscriptions?user_id=eq.${who.id}`, {
+    const {endpoint}=z.object({endpoint:z.string().url().max(2048)}).parse(await body(request));
+    await db(env, `push_devices?user_id=eq.${who.id}&subscription->>endpoint=eq.${encodeURIComponent(endpoint)}`, {
       method: "DELETE",
       token: who.token,
     });
+    await db(env,`push_subscriptions?user_id=eq.${who.id}&subscription->>endpoint=eq.${encodeURIComponent(endpoint)}`,{method:'DELETE',token:who.token});
     return reply({ ok: true });
   }
   if (path === "/api/trips" && request.method === "POST") {
@@ -358,6 +390,10 @@ async function api(request: Request, env: Env) {
     if (path === "/api/admin/config" && request.method === "PATCH") {
       const input = z
         .object({
+          allowances:z.object({guest:z.number().int().min(0).max(1000),user:z.number().int().min(0).max(1000),family:z.number().int().min(0).max(1000),admin:z.number().int().min(0).max(1000)}).optional(),
+          userAllowance:z.object({userId:z.string().uuid(),limit:z.number().int().min(0).max(1000).nullable()}).optional(),
+          providers:z.object({mapbox:z.object({enabled:z.boolean(),hard:z.number().int().min(0).max(10000000)}),google:z.object({enabled:z.boolean(),hard:z.number().int().min(0).max(10000000)}),geoapify:z.object({enabled:z.boolean(),hard:z.number().int().min(0).max(10000000)}),maps:z.object({enabled:z.boolean(),hard:z.number().int().min(0).max(10000000)})}).optional(),
+          countries:z.object({JO:z.enum(['mapbox','google']),LY:z.enum(['mapbox','google']),SA:z.enum(['mapbox','google'])}).optional(),
           paid: z.boolean().optional(),
           monthlyBudget: z.number().min(0).max(1000).optional(),
           provider: z.enum(["mapbox", "google", "geoapify", "maps"]).optional(),

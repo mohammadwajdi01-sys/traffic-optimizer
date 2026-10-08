@@ -64,6 +64,25 @@ assert.equal((await pg.query("select safety_buffer from user_preferences where u
 const c="33333333-3333-4333-8333-333333333333";
 await pg.exec(`insert into auth.users(id) values('${c}')`);
 assert.equal((await pg.query("select safety_buffer from user_preferences where user_id='"+c+"'")).rows[0].safety_buffer,0);
+await pg.exec(`insert into push_subscriptions(user_id,subscription) values('${a}','{"endpoint":"https://fcm.googleapis.com/old","keys":{"auth":"a","p256dh":"b"}}')`);
+await pg.exec(readFileSync('supabase/migrations/20261008113721_device_reminder_deliveries.sql','utf8'));
+assert.equal((await pg.query(`select count(*)::int as n from push_devices where user_id='${a}'`)).rows[0].n,1);
+await pg.exec(`set role authenticated;set request.jwt.claim.sub='${a}';insert into push_devices(user_id,subscription) values('${a}','{"endpoint":"https://fcm.googleapis.com/new","keys":{"auth":"a","p256dh":"b"}}');`);
+const devices=(await pg.query(`select id from push_devices order by created_at`)).rows;
+assert.equal(devices.length,2);
+await assert.rejects(pg.exec(`update push_devices set user_id='${b}'`));
+await assert.rejects(pg.exec(`insert into reminder_deliveries(user_id,subscription_id,occurrence_key,plan,candidate,locale,due_at,expires_at,next_attempt_at) values('${a}','${devices[0].id}','test','{}','{}','en',now(),now()+interval '1 hour',now())`));
+await pg.exec('reset role');
+const rid=(await pg.query(`select id from saved_routes where user_id='${a}' limit 1`)).rows[0].id;
+await pg.exec(`insert into reminder_deliveries(user_id,subscription_id,route_id,occurrence_key,plan,candidate,locale,due_at,expires_at,next_attempt_at) values('${a}','${devices[0].id}','${rid}','test','{}','{}','en',now(),now()+interval '1 hour',now()),('${a}','${devices[1].id}','${rid}','test','{}','{}','en',now(),now()+interval '1 hour',now());`);
+await pg.exec(`set role authenticated;set request.jwt.claim.sub='${b}';`);
+assert.equal((await pg.query('select count(*)::int as n from reminder_deliveries')).rows[0].n,0);
+await pg.exec(`set request.jwt.claim.sub='${a}';delete from push_devices where id='${devices[0].id}';`);
+assert.equal((await pg.query('select count(*)::int as n from push_devices')).rows[0].n,1);
+assert.equal((await pg.query('select count(*)::int as n from reminder_deliveries')).rows[0].n,1);
+await pg.exec(`update saved_routes set name='Updated' where id='${rid}'`);
+assert.equal((await pg.query('select status from reminder_deliveries')).rows[0].status,'cancelled');
+await pg.exec('reset role');
 await pg.exec(`delete from auth.users where id='${a}'`);
 assert.equal(
   (await pg.query("select count(*)::int as n from notification_jobs")).rows[0]

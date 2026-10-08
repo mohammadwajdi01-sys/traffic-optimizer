@@ -1843,3 +1843,14 @@ input[type="range"] {
 @media(max-width:760px){.forecast-timeline svg text{font-size:38px}.forecast-timeline svg text[data-tick="1"],.forecast-timeline svg text[data-tick="3"]{display:none}.forecast-timeline .chart-missing{font-size:38px}}
 .account-methods{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}.account-methods button{flex:1 1 160px}.account-link{background:transparent;color:#2459a9;border-color:transparent}.account-form input{min-width:0}.account-form{margin-block:16px}.account-form label{display:block;margin-block:12px}
 .password-input{position:relative}.password-input input{padding-inline-end:52px;width:100%;min-width:0}.password-eye{position:absolute;inset-inline-end:4px;top:50%;transform:translateY(-50%);display:grid;place-items:center;width:44px;height:44px;border:0;border-radius:8px;background:transparent;color:#2459a9;cursor:pointer}.password-eye:focus-visible{outline:3px solid #679cff;outline-offset:1px}.password-eye:disabled{opacity:.5;cursor:default}.password-requirements p{font-size:.875rem}.password-requirements ul{list-style:none;padding:0;margin-block:8px 16px;display:grid;gap:4px;font-size:.8125rem;color:#52647b}.password-requirements li{display:flex;gap:8px}.password-requirements li.met{color:#17663e}.grouped-settings{align-items:start}.settings-fields{border:0;padding:0;margin:0;min-width:0}.settings-advanced summary{min-height:44px;padding-block:12px;cursor:pointer}.grouped-settings .settings-actions{display:flex;flex-wrap:wrap;gap:10px}.grouped-settings .settings-actions .button{flex:1 1 150px}.grouped-settings h3{font-size:1rem}.grouped-settings input,.grouped-settings select{min-width:0}.grouped-settings .website-actions{margin-top:0}
+.owner-editor {border:0;padding:0;margin:0;min-width:0;display:grid;gap:18px;}
+.table-scroll {overflow-x:auto;max-width:100%;}
+.provider-panel input[type=number] {min-width:90px;max-width:130px;}
+.reminder-row {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-block-start:1px solid var(--border);padding-block:12px;}
+.reminder-row p {overflow-wrap:anywhere;}
+.legal-page section {margin-block:24px;}
+.legal-page .navigation-row {flex-wrap:wrap;}
+.owner-editor code {overflow-wrap:anywhere;white-space:normal;}
+@media (prefers-reduced-motion:reduce) {*,*::before,*::after {scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important;}}
+.skip-link {position:fixed;inset-inline-start:12px;top:-100px;z-index:10000;padding:12px 20px;border-radius:8px;background:#ffffff;color:#111;}
+.skip-link:focus {top:12px;}
