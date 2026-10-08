@@ -6,13 +6,61 @@ import {selectedWindow, migratePlan, recurringPlan} from "../shared/windows";
 import {weeklyPlans, liveWindow} from "../shared/planning";
 import {localInstant, iso} from "../shared/time";
 import {planSchema} from "../shared/schema";
-import type {Candidate, Plan} from "../shared/types";
+import type {Analysis, Candidate, Plan} from "../shared/types";
+import {checkedWeekSamples, durationScale, durationLevel, nearestWeekCheck, weeklyInsight, occurrenceMinute} from "../shared/weekly-insights";
 import {initialJourney, journeyOptions, rerankAnalysis, recommendationAllowed} from "../shared/journey-options";
 
 const p: Plan = {...defaultPlan(), date: "2026-10-07", earliestTime: "08:00", latestTime: "10:00"};
 const now = localInstant(p.date,"04:00",p.timezone);
 const time = (hm: string) => localInstant(p.date,hm,p.timezone);
 const forecast = (minutes = 30) => vi.fn(async (departureAt: string): Promise<Candidate> => ({departureAt,arrivalAt: iso(Date.parse(departureAt)+minutes*60000),durationSeconds: minutes*60,distanceMeters: 10000,provider: "mapbox",trafficCoverage: "unknown"}));
+
+describe("Weekly checked evidence",()=>{
+  const weekDay=(date:string,goal:Plan["goal"]="shortest"):Analysis=>{
+    const plan={...p,mode:"leave_between" as const,date,endDate:date,goal};
+    const samples=[['08:00',60],['09:02',20],['09:08',25],['10:01',1]].map(([hm,min])=>{const at=localInstant(date,String(hm),plan.timezone);return {departureAt:iso(at),arrivalAt:iso(at+Number(min)*60000),durationSeconds:Number(min)*60,distanceMeters:10000,provider:"mapbox" as const,trafficCoverage:"partial" as const};});
+    return {id:date,plan,samples,...summarize(samples,plan),avoid:[],provider:"mapbox",quality:"limited",partial:true,calls:samples.length,createdAt:iso(now),warnings:[],lowestMetric:"duration"};
+  };
+  const days=["2026-10-07","2026-10-08","2026-10-09"].map(d=>weekDay(d));
+  it("preserves all positions, selected weekdays and overnight horizon",()=>{
+    const plan={...p,mode:"leave_between" as const,endDate:p.date,demo:true};
+    expect(weeklyPlans(plan,now,[1,3,5]).map(d=>d?.date??null)).toEqual(["2026-10-07",null,"2026-10-09",null,null,"2026-10-12",null]);
+    expect(weeklyPlans(plan,now,[])).toEqual(Array(7).fill(null));
+    const last={...plan,demo:false,date:"2026-10-13",endDate:"2026-10-14",earliestTime:"23:00",latestTime:"05:00"};
+    expect(weeklyPlans(last,now,[2])[0]).toBeNull();
+  });
+  it("uses feasible direct checks within 15 minutes and discloses nearby timestamps",()=>{
+    const a=days[0],target=localInstant(a.plan.date,'09:00',a.plan.timezone);
+    expect(nearestWeekCheck(a,target)).toMatchObject({checkedAt:target+2*60000,approximate:true});
+    expect(nearestWeekCheck(a,target+2*60000)?.approximate).toBe(false);
+    expect(nearestWeekCheck(a,target-30*60000)).toBeNull();
+    expect(checkedWeekSamples(a)).toHaveLength(3);
+    expect(nearestWeekCheck(null,target)).toBeNull();
+  });
+  it("scales this week's measured provider durations without fixed traffic thresholds",()=>{
+    const scale=durationScale(days)!;
+    expect(scale).toEqual({min:1200,max:3600});
+    expect(durationLevel(1200,scale)).toBe(0);expect(durationLevel(3600,scale)).toBe(3);
+    expect(durationScale([null])).toBeNull();expect(durationLevel(900,{min:900,max:900})).toBe(0);
+  });
+  it("requires three distinct days and compares with the earliest feasible check",()=>{
+    expect(weeklyInsight(days.slice(0,2))).toBeNull();
+    expect(weeklyInsight([days[0],days[0],days[1]])).toBeNull();
+    expect(weeklyInsight([...days,null])).toMatchObject({bucket:540,days:3,checkedDays:3,medianDurationSeconds:1200,medianSavingsSeconds:2400,partial:true,goal:"shortest"});
+  });
+  it("respects soonest versus shortest when comparing recurring buckets",()=>{
+    expect(weeklyInsight(days.map(a=>({...a,plan:{...a.plan,goal:"soonest"}})))).toMatchObject({bucket:480,medianDurationSeconds:3600,medianSavingsSeconds:0,goal:"soonest"});
+  });
+  it("does not manufacture a shared bucket from different days' best times",()=>{
+    const nonmatching=days.map((a,i)=>({...a,samples:[{...a.samples[1],departureAt:iso(Date.parse(a.samples[1].departureAt)+i*20*60000),arrivalAt:iso(Date.parse(a.samples[1].arrivalAt)+i*20*60000)}]}));
+    expect(weeklyInsight(nonmatching)).toBeNull();
+  });
+  it("keeps overnight minutes and withholds unreliable Libya recommendations",()=>{
+    expect(occurrenceMinute(iso(localInstant('2026-10-08','00:05',p.timezone)),p)).toBe(1445);
+    const libya=days.map(a=>({...a,plan:{...a.plan,timezone:'Africa/Tripoli',origin:{...a.plan.origin,countryCode:'LY'}}}));
+    expect(weeklyInsight(libya)).toBeNull();expect(durationScale(libya)).toBeNull();
+  });
+});
 
 describe("Journey goals and reliability", () => {
   it("switches shortest drive to soonest arrival using the same checks and deterministic ties", async () => {

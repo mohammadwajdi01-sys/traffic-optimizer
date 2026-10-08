@@ -1,5 +1,9 @@
 # Current implementation status — 8 October 2026
 
+Batch 3 first group implements tasks 3.01–3.04: named saved-route cards with distinct Use in Plan/Leave now actions, isolated edit drafts and accessible delete confirmation; selected-date/weekday weekly preflight under unchanged limits; relative checked-duration colours, nearby-check timestamps, unknown states and phone day tables; and three-distinct-day 15-minute bucket insights with a median earliest-feasible-check driving-time comparison. Password account flows and reminder delivery are not included in this group.
+
+The user explicitly postponed core/device/Libya validation until tomorrow and authorized continuing the next WBS on 8 October. This permits implementation of the next group, not accepted-core or full-V1 closure. A33, real Android and live email/push acceptance remain open.
+
 Core follow-up: arrival-window-start alternatives are limited to arrival modes. Map failures retain the canvas so a later load can recover, report a safe localized failure category instead of always claiming setup is missing, and retry only on request. Arabic label-loader failures no longer destroy the map. Hosted map/provider and Android acceptance still require fresh evidence; this is not a Libya ETA accuracy fix.
 
 Batch 2 implements inline Today/Plan results, one shared saved-route selector, explicit shortest-drive/soonest-arrival goals, overnight bounds, cancellable requests, selectable sampled charts and checked-departure tables. Existing saved buffers are preserved; a migration changes only the default for new account preferences to zero.
@@ -8,7 +12,7 @@ The reported Libya ETA discrepancy remains unvalidated. Known Libya routes retai
 
 Daily comparison remains adaptive and capped at 24 checks, not an exhaustive check of every minute. Partial segment annotations are reported as partial. Google Routes stays disabled and spending guards stay unchanged.
 
-The authoritative execution and acceptance records are Traffic-Optimizer-UX-Implementation-Plan-and-WBS.md and Traffic-Optimizer-Audit-WBS-2026-10-06.md. Batch 2 regression/deployment evidence and actual Android checks must be recorded before acceptance; A33 still needs the reported paired Libya case. Batch 3, reminder delivery and full V1 acceptance are pending.
+The authoritative execution and acceptance records are Traffic-Optimizer-UX-Implementation-Plan-and-WBS.md and Traffic-Optimizer-Audit-WBS-2026-10-06.md. Batch 2 regression/deployment evidence and actual Android checks must be recorded before acceptance; A33 still needs the reported paired Libya case. Batch 3 tasks 3.05–3.16, reminder delivery and full V1 acceptance remain pending; 3.01–3.04 implementation still needs exact-source CI/deployment and hosted/device evidence.
 
 The original release snapshot below is historical and describes an earlier implementation.
 

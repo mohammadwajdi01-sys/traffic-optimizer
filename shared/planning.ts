@@ -16,9 +16,10 @@ export function liveWindow(p: Plan, now = Date.now()) {
 }
 
 // Keep all seven date positions, including unavailable dates, for the weekly grid.
-export function weeklyPlans(p: Plan, now = Date.now()): (Plan | null)[] {
+export function weeklyPlans(p: Plan, now = Date.now(), weekdays: readonly number[] = [0, 1, 2, 3, 4, 5, 6]): (Plan | null)[] {
   return Array.from({ length: 7 }, (_, i) => {
     const day = { ...p, date: addDays(p.date, i), endDate: p.endDate ? addDays(p.endDate, i) : undefined };
+    if (!weekdays.includes(new Date(`${day.date}T12:00:00Z`).getUTCDay())) return null;
     try {
       if (!p.demo) liveWindow(day, now);
       return day;

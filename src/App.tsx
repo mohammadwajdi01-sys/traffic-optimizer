@@ -62,6 +62,9 @@ import { SearchRegion } from "./SearchRegion";
 import { MapPreview } from "./MapPreview";
 import { nextSavedPlan } from "../shared/saved-route";
 import { SelectedJourney } from "./SelectedJourney";
+import { SavedRouteCard, EditSavedRoute, DeleteSavedRoute } from "./SavedRoutes";
+import { WeekResults, type WeekStatus } from "./WeekResults";
+import { repeatAr, repeatEn } from "./repeat-copy";
 import { Button, FieldError, Modal, Notice, displayFailure } from "./feedback";
 import { broadcastWebsiteLock } from "./private-session";
 const setupConfig: AppConfig = {
@@ -112,7 +115,8 @@ export default function App() {
       setDemo,
       setLocale,
     } = useStore(),
-    t = locale === "ar" ? ar : en;
+    t = locale === "ar" ? ar : en,
+    repeat = locale === "ar" ? repeatAr : repeatEn;
   const [page, setPage] = useState(location.pathname === "/results" ? "plan" : location.pathname.slice(1) || "today"),
     [origin, setOrigin] = useState<Location | null>(null),
     [destination, setDestination] = useState<Location | null>(null),
@@ -120,7 +124,10 @@ export default function App() {
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [saveOpen, setSaveOpen] = useState(false),
-    [editingId, setEditingId] = useState<string | null>(null),
+    [editingRoute, setEditingRoute] = useState<SavedRoute | null>(null),
+    [deletingRoute, setDeletingRoute] = useState<SavedRoute | null>(null),
+    [weekDays, setWeekDays] = useState([0,1,2,3,4,5,6]),
+    [weekStatuses, setWeekStatuses] = useState<WeekStatus[]>([]),
     [name, setName] = useState(""),
     [days, setDays] = useState([0, 1, 2, 3, 4]),
     [reminders, setReminders] = useState(false),
@@ -248,6 +255,7 @@ export default function App() {
       form.reset({...defaultPlan(), origin:{displayName:"",latitude:0,longitude:0}, destination:{displayName:"",latitude:0,longitude:0}});
       restoredOwner.current = null;
     }
+    setEditingRoute(null);setDeletingRoute(null);setWeekStatuses([]);
     setQuickRouteId(""); setInstant(null); setAnalysis(null); setSelected(null); setWeekly([]);
   }, [user]);
   useEffect(() => {
@@ -305,7 +313,8 @@ export default function App() {
   }
   function useRoute(r: SavedRoute, stayOnPage = false) {
     const p = nextSavedPlan(r);
-    setEditingId(null);
+    setWeekDays(r.days.length ? [...r.days] : [0,1,2,3,4,5,6]);
+    setEditingRoute(null);
     const isExample = r.plan.origin.source === "demo";
     setDemo(isExample);
     setQuickRouteId(r.id);
@@ -325,7 +334,8 @@ export default function App() {
   async function runSaved(r: SavedRoute, now = false) {
     if (forecastInFlight.current) return;
     try {
-      const p = useRoute(r);
+      const p = useRoute(r, now);
+      if (now) go("today");
       if (p.origin.source === "gps") return;
       const route = {...p, demo: p.origin.source === "demo"};
       if (now) await leaveNow(route);
@@ -410,7 +420,7 @@ export default function App() {
     };
     try {
       if (demo) {
-        const next = editingId ? safeDeviceRoutes().map(old => old.id === editingId ? {...r, id: editingId} : old) : [{ ...r, id: crypto.randomUUID() }, ...safeDeviceRoutes()];
+        const next = [{ ...r, id: crypto.randomUUID() }, ...safeDeviceRoutes()];
         localStorage.setItem("traffic.demoRoutes", JSON.stringify(next));
         setSaved(next);
       } else {
@@ -419,7 +429,7 @@ export default function App() {
           setAuthOpen(true);
           return;
         }
-        await api(editingId ? "/api/routes/" + editingId : "/api/routes", r, editingId ? "PATCH" : "POST");
+        await api("/api/routes", r, "POST");
         const rows = await api<SavedRoute[]>("/api/routes");
         if (accountRef.current !== owner) return;
         setSaved(rows);
@@ -430,23 +440,33 @@ export default function App() {
       setError(displayFailure(e, locale));
     }
   }
+  async function updateRoute(r: SavedRoute) {
+    const owner = user;
+    if (r.plan.origin.source === "demo") {
+      const next = safeDeviceRoutes().map(old => old.id === r.id ? r : old);
+      localStorage.setItem("traffic.demoRoutes", JSON.stringify(next)); setSaved(next);
+    } else {
+      await api("/api/routes/" + r.id, {name:r.name,plan:r.plan,days:r.days,reminders:r.reminders}, "PATCH");
+      if (accountRef.current !== owner) return;
+      const rows = await api<SavedRoute[]>("/api/routes");
+      if (accountRef.current !== owner) return;
+      setSaved(rows);
+    }
+    setNotice(t.saved);
+  }
   async function deleteRoute(r: SavedRoute) {
     const owner = user;
-    if (!window.confirm(t.confirmDelete)) return;
-    try {
-      if (r.plan.origin.source === "demo") {
-        const next = safeDeviceRoutes().filter((v) => v.id !== r.id);
-        localStorage.setItem("traffic.demoRoutes", JSON.stringify(next));
-        setSaved(next);
-      } else {
-        await api("/api/routes/" + r.id, undefined, "DELETE");
-        const rows = await api<SavedRoute[]>("/api/routes");
-        if (accountRef.current !== owner) return;
-        setSaved(rows);
-      }
-    } catch (e) {
-      setError(displayFailure(e, locale));
+    if (r.plan.origin.source === "demo") {
+      const next = safeDeviceRoutes().filter(v => v.id !== r.id);
+      localStorage.setItem("traffic.demoRoutes", JSON.stringify(next)); setSaved(next);
+    } else {
+      await api("/api/routes/" + r.id, undefined, "DELETE");
+      if (accountRef.current !== owner) return;
+      const rows = await api<SavedRoute[]>("/api/routes");
+      if (accountRef.current !== owner) return;
+      setSaved(rows);
     }
+    if(quickRouteId===r.id)setQuickRouteId("");
   }
   async function runWeek() {
     if (!demo && !user) {
@@ -460,7 +480,7 @@ export default function App() {
     }
     cancelRequest();const controller=new AbortController();requestController.current=controller;
     setError("");setBusy(true);setWeekly([]);const version=++requestVersion.current;
-    const list: (Analysis | null)[] = [];
+    const list: (Analysis | null)[] = Array(7).fill(null);
     const p = {
       ...form.getValues(),
       origin,
@@ -471,10 +491,14 @@ export default function App() {
     setPlan(p);
     try {
       if (!demo && !recommendationAllowed(p)) {setError(t.unvalidatedRoute);return;}
-      const days = weeklyPlans(p);
+      const checked=planSchema.safeParse(p);
+      if(!checked.success){setError(t.windowError);return;}
+      const days = weeklyPlans(p, Date.now(), weekDays);
+      const statuses:WeekStatus[]=days.map((day,i)=>day?"waiting":weekDays.includes(new Date(`${addDays(p.date,i)}T12:00Z`).getUTCDay())?"unavailable":"notSelected");
+      setWeekStatuses([...statuses]);
       const count = days.filter(Boolean).length;
       if (!count) {
-        setError(t.weekHorizon);
+        setError(repeat.noEligible);
         return;
       }
       if (!demo) {
@@ -486,30 +510,29 @@ export default function App() {
           return;
         }
       }
-      if (count < 7) setNotice(t.weekHorizon);
+      if (statuses.includes("unavailable")) setNotice(t.weekHorizon);
+      setWeekly([...list]);
       for (let i = 0; i < 7; i++) {
         if (version !== requestVersion.current) return;
         setWeekProgress(i + 1);
         const day = days[i];
         if (!day) {
-          list.push(null);
-          setWeekly([...list]);
           continue;
         }
         try {
-          list.push(
-            demo
-              ? await optimize(day, (time) => demoForecast(day, time))
-              : await api<Analysis>("/api/analysis/day", day,undefined,controller.signal),
-          );
+          statuses[i]="checking";setWeekStatuses([...statuses]);
+          const result=demo
+            ? await optimize(day, (time) => demoForecast(day, time))
+            : await api<Analysis>("/api/analysis/day", day,undefined,controller.signal);
+          if(version!==requestVersion.current)return;
+          list[i]=result;statuses[i]="done";setWeekStatuses([...statuses]);
         } catch (e) {
           if(version!==requestVersion.current)return;
-          list.push(null);setError(displayFailure(e, locale));
+          statuses[i]="failed";setWeekStatuses([...statuses]);setError(displayFailure(e, locale));
           if (
             e instanceof ApiFailure &&
             [401, 403, 429, 503].includes(e.status)
           ) {
-            while (list.length < 7) list.push(null);
             setWeekly([...list]);
             break;
           }
@@ -625,7 +648,7 @@ export default function App() {
     setOrigin(null); setDestination(null); setQuickRouteId(""); setInstant(null); setAnalysis(null); setSelected(null); setWeekly([]);
     restoredOwner.current = null;
     setPrefs({locale, ...devicePreferences(), measurement_opt_in:false});
-    setSaveOpen(false); setEditingId(null); setAuthOpen(false); setEmail(""); setName(""); setReminders(false); setNotice("");
+    setSaveOpen(false); setEditingRoute(null); setAuthOpen(false); setEmail(""); setName(""); setReminders(false); setNotice("");
     const reset = defaultPlan();
     setPlan(reset); form.reset(reset);
     queryClient.removeQueries({predicate:query => query.queryKey[0] !== "config"});
@@ -676,7 +699,7 @@ export default function App() {
 
   const savedSelector=<SavedRouteSelector routes={visibleSaved} value={quickRouteId} loading={routesLoading} failed={routesError} busy={busy} signedIn={Boolean(user)} authConfigured={config.authConfigured} locale={locale}
     onSelect={route=>{try{useRoute(route,true);}catch(error){setError(displayFailure(error,locale));}}} onSignIn={()=>setAuthOpen(true)} onRetry={()=>setRoutesReload(value=>value+1)}/>;
-  const resultBody=analysis && <ResultPanel navigation={prefs.navigation} analysis={analysis} selected={selected} onSelect={setSelected} locale={locale} onSave={()=>{setName("");setEditingId(null);setReminders(false);setSaveOpen(true);}}/>;
+  const resultBody=analysis && <ResultPanel navigation={prefs.navigation} analysis={analysis} selected={selected} onSelect={setSelected} locale={locale} onSave={()=>{setName("");setEditingRoute(null);setReminders(false);setSaveOpen(true);}}/>;
   const activeCandidate=page==="today"?instant?.candidate??null:selected;
   let minTravelDate:string;
   try{minTravelDate=localDate(Date.now(),form.getValues("timezone"));}catch{minTravelDate=localDate(Date.now(),"UTC");}
@@ -814,18 +837,6 @@ export default function App() {
     </form>
   );
 
-  const weekWindows = weekly.map((a) => (a ? windowFor(a.plan, 0) : null));
-  const heatWindow = weekWindows.find((w) => w !== null);
-  const heatOffsets: number[] = [];
-  if (heatWindow) {
-    for (
-      let offset = 0;
-      offset < heatWindow[1] - heatWindow[0];
-      offset += 30 * 60000
-    )
-      heatOffsets.push(offset);
-    heatOffsets.push(heatWindow[1] - heatWindow[0]);
-  }
   const legal = page === "terms" || page === "privacy";
   return (
     <div className="app-shell">
@@ -1023,194 +1034,18 @@ export default function App() {
             <section className="control-panel">{page==="today"?<TodayView navigation={prefs.navigation} instant={instant} locale={locale} busy={busy} online={online} onRefresh={()=>void leaveNow()}>{planner}</TodayView>:planner}</section>
             <div className="map-results" ref={mapPanel}><MapPreview origin={origin} destination={destination} candidate={activeCandidate} googleContent={page==="plan" && Boolean(analysis?.provider.includes("google"))} mapEnabled={config.mapConfigured && Boolean(user||guestReady)} verificationPending={config.publicBeta && !user && !guestReady}/>{page==="plan" && resultBody}</div>
           </div>}
-          {page === "week" && (
-            <>
-              <div className="page-heading">
-                <div>
-                  <span className="eyebrow">{t.week}</span>
-                  <h1>{t.weekTitle}</h1>
-                  <p>
-                    {origin && destination
-                      ? `${origin.displayName} · ${destination.displayName}`
-                      : t.weekHelp}
-                  </p>
-                </div>
-                <button
-                  className="button primary"
-                  disabled={busy || !online}
-                  onClick={runWeek}
-                >
-                  {busy ? (
-                    <LoaderCircle size={19} className="spin" />
-                  ) : (
-                    <BarChart3 size={19} />
-                  )}{" "}
-                  {weekProgress
-                    ? `${t.workingWeek} ${weekProgress}/7`
-                    : t.runWeek}
-                </button>
-              </div>
-              {savedSelector}
-              <div className="week-grid">
-                <section className="panel">
-                  <div className="section-heading">
-                    <h2>{t.heatmap}</h2>
-                    <button
-                      className="icon-button"
-                      title={t.returnTrip}
-                      aria-label={t.returnTrip}
-                      onClick={() => {
-                        const a = origin;
-                        changeLocation("from", destination);
-                        changeLocation("to", a);
-                      }}
-                    >
-                      <ArrowDownUp size={19} />
-                    </button>
-                  </div>
-                  {weekly.length ? (
-                    <>
-                      <div className="heatmap">
-                        <div />
-                        {Array.from({ length: 7 }, (_, i) => (
-                          <b key={i}>
-                            {dateLabel(addDays(plan.date, i), locale)}
-                          </b>
-                        ))}
-                        {heatOffsets.map((offset) => {
-                          const rowTime = heatWindow![0] + offset;
-                          const hm = clock(
-                            new Date(rowTime).toISOString(),
-                            plan.timezone,
-                            locale,
-                          );
-                          return (
-                            <div className="heat-row" key={hm}>
-                              <span>{hm}</span>
-                              {Array.from({ length: 7 }, (_, day) => {
-                                const a = weekly[day];
-                                const target = weekWindows[day]
-                                  ? weekWindows[day]![0] + offset
-                                  : NaN;
-                                const c = a?.samples.reduce<
-                                  Candidate | undefined
-                                >(
-                                  (best, c) =>
-                                    !best ||
-                                    Math.abs(
-                                      Date.parse(isArrival(a!.plan) ? c.arrivalAt : c.departureAt) - target,
-                                    ) <
-                                      Math.abs(
-                                        Date.parse(isArrival(a!.plan) ? best.arrivalAt : best.departureAt) - target,
-                                      )
-                                      ? c
-                                      : best,
-                                  undefined,
-                                );
-                                const usable =
-                                  c &&
-                                  Math.abs(
-                                    Date.parse(isArrival(a!.plan) ? c.arrivalAt : c.departureAt) - target,
-                                  ) <=
-                                    15 * 60000;
-                                const min = usable
-                                  ? Math.round(c!.durationSeconds / 60)
-                                  : null;
-                                return (
-                                  <button
-                                    className={
-                                      "heat-cell " +
-                                      (min === null
-                                        ? "unknown"
-                                        : min < 28
-                                          ? "low"
-                                          : min < 36
-                                            ? "medium"
-                                            : min < 45
-                                              ? "high"
-                                              : "severe")
-                                    }
-                                    key={day}
-                                    title={
-                                      min === null
-                                        ? t.notSampled
-                                        : `${hm}: ${min} ${t.minutes}`
-                                    }
-                                    aria-label={`${dateLabel(addDays(plan.date, day), locale)} ${hm}: ${min === null ? t.notSampled : min + " " + t.minutes}`}
-                                    onClick={() => {
-                                      if (usable) {
-                                        form.reset(a!.plan);setPlan(a!.plan);setInstant(null);
-                                        setOrigin(a!.plan.origin);setDestination(a!.plan.destination);
-                                        setAnalysis(a!);setSelected(c!);go("plan");
-                                      }
-                                    }}
-                                  >
-                                    {min ?? "—"}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <div className="heat-legend">
-                        <span>
-                          <i className="low" />
-                          {t.light}
-                        </span>
-                        <span>
-                          <i className="medium" />
-                          28–35
-                        </span>
-                        <span>
-                          <i className="high" />
-                          36–44
-                        </span>
-                        <span>
-                          <i className="severe" />
-                          {t.heavy}
-                        </span>
-                      </div>
-                      <p className="micro-copy">{t.windowHelp}</p>
-                    </>
-                  ) : (
-                    <div className="empty-state">
-                      <CalendarDays size={42} />
-                      <p>{t.weekEmpty}</p>
-                      <button
-                        className="button secondary"
-                        onClick={() => go("plan")}
-                      >
-                        {t.plan}
-                      </button>
-                    </div>
-                  )}
-                </section>
-                <section className="panel">
-                  <h2>{t.weeklySummary}</h2>
-                  {weekly.map((a, i) => (
-                    <div className="day-summary" key={i}>
-                      <span>{dateLabel(addDays(plan.date, i), locale)}</span>
-                      <strong>
-                        {a?.best
-                          ? clock(a.best.departureAt, plan.timezone, locale)
-                          : "—"}
-                      </strong>
-                      <small>
-                        {a?.best
-                          ? `${Math.round(a.best.durationSeconds / 60)} ${t.minutes}`
-                          : t.notSampled}
-                      </small>
-                    </div>
-                  ))}
-                  <div className="insight-note">
-                    <Leaf size={23} />
-                    <p>{t.accuracyHelp}</p>
-                  </div>
-                </section>
-              </div>
-            </>
-          )}
+          {page === "week" && <>
+            <div className="page-heading"><div><span className="eyebrow">{t.week}</span><h1>{t.weekTitle}</h1><p>{origin&&destination?`${origin.displayName} · ${destination.displayName}`:t.weekHelp}</p></div>
+              <Button pending={busy} disabled={!online || !weekDays.length} onClick={()=>void runWeek()}>{weekProgress?`${t.workingWeek} ${weekProgress}/7`:repeat.checkDays}</Button>
+            </div>
+            {savedSelector}
+            <section className="panel week-controls"><label>{repeat.weekStart}<input type="date" min={demo?undefined:minTravelDate} value={form.watch("date")} disabled={busy} onChange={event=>{const date=event.target.value;if(!date)return;const overnight=form.getValues("endDate")!==form.getValues("date");form.setValue("date",date);form.setValue("endDate",overnight?addDays(date,1):date);}}/></label>
+              <fieldset className="weekday-fields" disabled={busy}><legend>{repeat.selectedDays}</legend><div className="day-picker">{t.dayNames.map((name,i)=><button type="button" key={i} className={weekDays.includes(i)?"active":""} aria-pressed={weekDays.includes(i)} onClick={()=>{cancelRequest();setWeekly([]);setWeekStatuses([]);setWeekDays(previous=>previous.includes(i)?previous.filter(day=>day!==i):[...previous,i]);}}>{name}</button>)}</div></fieldset>
+              <p>{repeat.weekWindow}: {t[mode]} · <bdi>{form.watch("earliestTime")}–{form.watch("latestTime")}</bdi> {endsNextDay?`(${t.endsNextDay})`:""} · <bdi>{form.watch("timezone")}</bdi></p><Button className="button secondary" disabled={busy} onClick={()=>go("plan")}>{repeat.editWindow}</Button><p className="micro-copy">{repeat.selectedHelp}</p>
+              {busy&&<Button className="button secondary" onClick={()=>{cancelRequest();setNotice(t.cancelHelp);}}>{t.cancelCheck}</Button>}
+            </section>
+            {weekly.length?<WeekResults analyses={weekly} statuses={weekStatuses} plan={plan} locale={locale} onChoose={(a,c)=>{form.reset(a.plan);setPlan(a.plan);setInstant(null);setOrigin(a.plan.origin);setDestination(a.plan.destination);setAnalysis(a);setSelected(c);go("plan");}}/>:<section className="panel empty-state"><CalendarDays size={42}/><p>{t.weekEmpty}</p></section>}
+          </>}
           {page === "routes" && (
             <>
               <div className="page-heading">
@@ -1229,51 +1064,7 @@ export default function App() {
               {routesLoading && <p role="status">{t.loadingRoutes}</p>}
               {routesError && <button className="button secondary" onClick={() => setRoutesReload(v=>v+1)}>{t.retryRoutes}</button>}
               <div className="routes-grid">
-                {visibleSaved.map((r) => (
-                  <article className="saved-route panel" key={r.id}>
-                    <div className="saved-route-head">
-                      <span className="route-icon">
-                        <Route size={23} />
-                      </span>
-                      <h2>{r.name}</h2>
-                      <button
-                        className="icon-button danger"
-                        aria-label={t.delete + " " + r.name}
-                        onClick={() => deleteRoute(r)}
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    </div>
-                    <p>{r.plan.origin.displayName}</p>
-                    <p>{r.plan.destination.displayName}</p>
-                    <div className="route-pills">
-                      <span>
-                        {r.plan.origin.source === "demo"
-                          ? t.savedOnDevice
-                          : t[migratePlan(r.plan).mode]}
-                      </span>
-                      <span>
-                        {r.days.map((d) => t.dayNames[d]).join(" · ")}
-                      </span>
-                    </div>
-                    {r.reminders && (
-                      <p>
-                        <Bell size={14} /> {t.reminders}
-                      </p>
-                    )}
-                    <button className="button secondary full" onClick={() => {
-                      useRoute(r); setEditingId(r.id); setName(r.name); setDays(r.days); setReminders(r.reminders); setSaveOpen(true);
-                    }}>{t.edit}</button>
-                    <button
-                      className="button secondary full"
-                      disabled={busy || !online || (r.plan.origin.source !== "demo" && !user)}
-                      onClick={() => runSaved(r)}
-                    >
-                      {t.use}
-                    </button>
-                    <button className="button secondary full" disabled={busy || !online || (r.plan.origin.source !== "demo" && !user)} onClick={() => runSaved(r, true)}>{t.leaveNow}</button>
-                  </article>
-                ))}
+                {visibleSaved.map(r=><SavedRouteCard key={r.id} route={r} locale={locale} disabled={busy || !online || (r.plan.origin.source!=="demo" && !user)} onUse={()=>{try{useRoute(r);}catch(e){setError(displayFailure(e,locale));}}} onNow={()=>void runSaved(r,true)} onEdit={()=>setEditingRoute(r)} onDelete={()=>setDeletingRoute(r)}/>)}
                 {!visibleSaved.length && !routesLoading && !routesError && (
                   <div className="panel empty-state">
                     <Bookmark size={40} />
@@ -1502,7 +1293,7 @@ export default function App() {
           </a>
         ))}
       </nav>
-      {saveOpen && <Modal title={editingId ? t.edit : t.save} description={t.saveHelp} closeLabel={t.close} onClose={() => setSaveOpen(false)} busy={busy}>
+      {saveOpen && <Modal title={t.save} description={t.saveHelp} closeLabel={t.close} onClose={() => setSaveOpen(false)} busy={busy}>
             <label>
               {t.routeName}
               <input
@@ -1514,10 +1305,6 @@ export default function App() {
                 }
               />
             </label>
-            {editingId && <div className="date-time">
-              <label>{isArrival(form.getValues()) ? t.earliestArrivalLabel : t.earliest}<input type="time" value={form.watch("earliestTime")} onChange={e => form.setValue("earliestTime",e.target.value)} /></label>
-              <label>{isArrival(form.getValues()) ? t.latestArrivalLabel : t.latest}<input type="time" value={form.watch("latestTime")} onChange={e => form.setValue("latestTime",e.target.value)} /></label>
-            </div>}
             <p>{t.days}</p>
             <div className="day-picker">
               {t.dayNames.map((d, i) => (
@@ -1555,6 +1342,8 @@ export default function App() {
               {t.save}
             </button>
       </Modal>}
+      {editingRoute && <EditSavedRoute key={editingRoute.id} route={editingRoute} locale={locale} push={push} onSave={updateRoute} onClose={()=>setEditingRoute(null)}/>}
+      {deletingRoute && <DeleteSavedRoute key={deletingRoute.id} route={deletingRoute} locale={locale} onDelete={()=>deleteRoute(deletingRoute)} onClose={()=>setDeletingRoute(null)}/>}
       {authOpen && <SignInDialog config={config} email={email} onEmail={setEmail} onClose={() => setAuthOpen(false)} />}
     </div>
   );
