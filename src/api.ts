@@ -22,12 +22,14 @@ export async function api<T>(
   body?: unknown,
   method?: string,
   signal?: AbortSignal,
+  expectedAccount?: string,
 ): Promise<T> {
   signal?.throwIfAborted();
   const { data } = supabase
     ? await supabase.auth.getSession()
     : { data: { session: null } };
   signal?.throwIfAborted();
+  if(expectedAccount!==undefined && data.session?.user.email!==expectedAccount)throw new ApiFailure(401,"Account session changed.");
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };

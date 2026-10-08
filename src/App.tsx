@@ -58,6 +58,7 @@ import { useSearchLocation } from "./search-location";
 import GuestAccess from "./GuestAccess";
 import SignInDialog from "./SignInDialog";
 import PasswordDialog from "./PasswordDialog";
+import SettingsPanel from "./SettingsPanel";
 import {accountCallback, clearAccountCallback} from "./account-auth";
 import {accountAr,accountEn} from "./account-copy";
 import { LocationField } from "./LocationField";
@@ -164,6 +165,9 @@ export default function App() {
     [guestExpiresAt, setGuestExpiresAt] = useState<number | null>(null),
     [push, setPush] = useState(false),
     [tripStart, setTripStart] = useState<string | null>(null);
+  const [savedPrefs,setSavedPrefs]=useState(prefs);
+  const [prefsLoading,setPrefsLoading]=useState(false),[prefsError,setPrefsError]=useState(false),[prefsBusy,setPrefsBusy]=useState(false);
+  const prefsRequest=useRef(0),prefsInFlight=useRef(false);
   const configQuery = useQuery({
     queryKey: ["config"],
     queryFn: () => api<AppConfig>("/api/config"),
@@ -287,17 +291,20 @@ export default function App() {
       form.reset({...defaultPlan(), origin:{displayName:"",latitude:0,longitude:0}, destination:{displayName:"",latitude:0,longitude:0}});
       restoredOwner.current = null;
     }
-    setEditingRoute(null);setDeletingRoute(null);setWeekStatuses([]);
+    setEditingRoute(null);setDeletingRoute(null);setWeekStatuses([]);setTripStart(null);
     setQuickRouteId(""); setInstant(null); setAnalysis(null); setSelected(null); setWeekly([]);
   }, [user]);
   useEffect(() => {
     setSavedFor(user); setRoutesError(false);
+    prefsRequest.current++;prefsInFlight.current=false;setPrefsBusy(false);setPrefsError(false);
+    const defaults={locale,...(user&&!demo?{navigation:"ask" as const,safety_buffer:0}:devicePreferences()),measurement_opt_in:false};
+    setPrefs(defaults);setSavedPrefs(defaults);
     if (!user || demo) {
-      setRole("user"); setSaved(safeDeviceRoutes()); setRoutesLoading(false);
+      setRole("user"); setSaved(safeDeviceRoutes()); setRoutesLoading(false);setPrefsLoading(false);
       return;
     }
     let active = true;
-    setSaved([]); setRoutesLoading(true);
+    setSaved([]); setRoutesLoading(true);setPrefsLoading(true);
     api<{ role: string }>("/api/me")
       .then(v => {if(active) setRole(v.role);}).catch(() => {});
     api<SavedRoute[]>("/api/routes")
@@ -307,10 +314,11 @@ export default function App() {
     api<any[]>("/api/preferences")
       .then(rows => {
         if (active && rows[0]) {
-          setPrefs(rows[0]); setLocale(rows[0].locale);
+          const loaded={locale:rows[0].locale,navigation:rows[0].navigation,safety_buffer:rows[0].safety_buffer,measurement_opt_in:rows[0].measurement_opt_in};
+          setPrefs(loaded);setSavedPrefs(loaded);setLocale(loaded.locale);
           if (!restoredOwner.current) form.setValue("safetyBufferMinutes", rows[0].safety_buffer);
         }
-      }).catch(() => {});
+      }).catch(() => {if(active)setPrefsError(true);}).finally(()=>{if(active)setPrefsLoading(false);});
     return () => {active = false;};
   }, [user, demo, routesReload]);
   useEffect(() => {
@@ -602,36 +610,31 @@ export default function App() {
     } finally {if(requestController.current===controller){requestController.current=null;forecastInFlight.current=false;setBusy(false);}}
   }
   async function savePreferences() {
-    if (
-      !Number.isInteger(prefs.safety_buffer) ||
-      prefs.safety_buffer < 0 ||
-      prefs.safety_buffer > 60
-    ) {
-      setError(
-        locale === "ar"
-          ? "اختر هامشًا من 0 إلى 60 دقيقة."
-          : "Choose a safety buffer from 0 to 60 minutes.",
-      );
-      return;
+    if(prefsInFlight.current||prefsLoading||prefsError)return;
+    if(!Number.isInteger(prefs.safety_buffer)||prefs.safety_buffer<0||prefs.safety_buffer>60) {
+      setError(locale==="ar"?"اختر هامشاً من 0 إلى 60 دقيقة.":"Choose a safety buffer from 0 to 60 minutes.");return;
     }
+    const owner=user,wasDemo=demo,version=++prefsRequest.current,snapshot={...prefs,measurement_opt_in:Boolean(user&&!demo&&prefs.measurement_opt_in)};
+    prefsInFlight.current=true;setPrefsBusy(true);setError("");
     try {
-      if (user) {
-        await api("/api/preferences", prefs, "PATCH");
-      }
-      localStorage.setItem(
-        "traffic.preferences",
-        JSON.stringify({
-          navigation: prefs.navigation,
-          safety_buffer: prefs.safety_buffer,
-        }),
-      );
-      setLocale(prefs.locale);
-      form.setValue("safetyBufferMinutes", prefs.safety_buffer);
-      setPlan({ ...plan, safetyBufferMinutes: prefs.safety_buffer });
+      if(owner&&!wasDemo)await api("/api/preferences",snapshot,"PATCH",undefined,owner);
+      if(version!==prefsRequest.current||owner!==accountRef.current||wasDemo!==useStore.getState().demo)return;
+      if(!owner||wasDemo)localStorage.setItem("traffic.preferences",JSON.stringify({navigation:snapshot.navigation,safety_buffer:snapshot.safety_buffer}));
+      setPrefs(snapshot);setSavedPrefs(snapshot);setLocale(snapshot.locale);
+      if(!restoredOwner.current){form.setValue("safetyBufferMinutes",snapshot.safety_buffer);setPlan({...plan,safetyBufferMinutes:snapshot.safety_buffer});}
+      if(!snapshot.measurement_opt_in)setTripStart(null);
       setNotice(t.updated);
-    } catch (e) {
-      setError(displayFailure(e, locale));
-    }
+    } catch(e){if(version===prefsRequest.current&&owner===accountRef.current)setError(displayFailure(e,locale));}
+    finally{if(version===prefsRequest.current){prefsInFlight.current=false;setPrefsBusy(false);}}
+  }
+  async function recordTrip() {
+    if(!user||demo||!savedPrefs.measurement_opt_in||prefsLoading||prefsError)return;
+    const owner=user;
+    if(!tripStart){setTripStart(new Date().toISOString());return;}
+    try {
+      await api("/api/trips",{actual_departure:tripStart,actual_arrival:new Date().toISOString()},undefined,undefined,owner);
+      if(accountRef.current===owner){setTripStart(null);setNotice(t.tripRecorded);}
+    }catch(e){if(accountRef.current===owner)setError(displayFailure(e,locale));}
   }
   async function enablePush() {
     try {
@@ -679,7 +682,8 @@ export default function App() {
     setUser(null); setRole("user"); setSaved([]); setSavedFor(null); setPush(false); setTripStart(null);
     setOrigin(null); setDestination(null); setQuickRouteId(""); setInstant(null); setAnalysis(null); setSelected(null); setWeekly([]);
     restoredOwner.current = null;
-    setPrefs({locale, ...devicePreferences(), measurement_opt_in:false});
+    const defaults={locale,...(user&&!demo?{navigation:"ask" as const,safety_buffer:0}:devicePreferences()),measurement_opt_in:false};
+    setPrefs(defaults);setSavedPrefs(defaults);prefsRequest.current++;prefsInFlight.current=false;setPrefsBusy(false);
     setSaveOpen(false); setEditingRoute(null); setAuthOpen(false); setEmail(""); setName(""); setReminders(false); setNotice("");
     const reset = defaultPlan();
     setPlan(reset); form.reset(reset);
@@ -1117,161 +1121,14 @@ export default function App() {
               <div className="page-heading">
                 <h1>{t.settings}</h1>
               </div>
-              <div className="settings-grid">
-                <section className="panel">
-                  <h2>{t.account}</h2>
-                  {user ? (
-                    <>
-                      <p>{user}</p>
-                      <Button className="button secondary" disabled={busy} onClick={()=>{setEmail(user);setAuthMode("forgot");setAccountLinkError(false);setAuthOpen(true);}}>{locale==="ar"?accountAr.change:accountEn.change}</Button>
-                      <Button className="button secondary" disabled={busy} onClick={() => void signOutPersonal()}>{t.localSignOut}</Button>
-                      <p className="micro-copy">{t.localSignOutHelp}</p>
-                    </>
-                  ) : (
-                    <>
-                      <p>{config.authConfigured ? t.signin : t.authSetup}</p>
-                      <button
-                        className="button secondary"
-                        onClick={() => setAuthOpen(true)}
-                      >
-                        {t.signin}
-                      </button>
-                    </>
-                  )}
-                  {config.privateAccess && <div className="website-actions">
-                    <form method="post" action="/private/lock" onSubmit={event => {event.preventDefault();void lockWebsite();}}><Button className="button secondary" type="submit" disabled={busy}>{t.lockSite}</Button></form>
-                    <Button className="button secondary" disabled={busy} onClick={() => void signOutPersonal(true)}>{t.lockAndSignOut}</Button>
-                    <p className="micro-copy">{t.privateAccountHelp}</p>
-                  </div>}
-                  <hr />
-                  <label>
-                    {t.language}
-                    <select
-                      value={locale}
-                      onChange={(e) => setLocale(e.target.value as "en" | "ar")}
-                    >
-                      <option value="en">English</option>
-                      <option value="ar">العربية</option>
-                    </select>
-                  </label>
-                  <label>
-                    {t.defaultNav}
-                    <select
-                      value={prefs.navigation}
-                      onChange={(e) =>
-                        setPrefs({
-                          ...prefs,
-                          navigation: e.target.value as "ask",
-                        })
-                      }
-                    >
-                      <option value="ask">{t.ask}</option>
-                      <option value="google">Google Maps</option>
-                      <option value="waze">Waze</option>
-                    </select>
-                  </label>
-                  <label>
-                    {t.buffer}
-                    <input
-                      type="number"
-                      min="0"
-                      max="60"
-                      value={prefs.safety_buffer}
-                      onChange={(e) =>
-                        setPrefs({
-                          ...prefs,
-                          safety_buffer: Number(e.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <button className="button primary" onClick={savePreferences}>
-                    {t.saveSettings}
-                  </button>
-                </section>
-                <section className="panel">
-                  <h2>{t.notifications}</h2>
-                  <p>{push ? t.pushReady : t.pushHelp}</p>
-                  <button
-                    className="button secondary"
-                    disabled={!config.vapidPublicKey || !user}
-                    onClick={push ? disablePush : enablePush}
-                  >
-                    <Bell size={17} />
-                    {push ? t.disablePush : t.enablePush}
-                  </button>
-                  <hr />
-                  <h2>{t.install}</h2>
-                  <p>{t.installHelp}</p>
-                  {installPrompt && (
-                    <button
-                      className="button primary"
-                      onClick={async () => {
-                        await installPrompt.prompt();
-                        setInstallPrompt(null);
-                      }}
-                    >
-                      <Download size={17} />
-                      {t.install}
-                    </button>
-                  )}
-                  <hr />
-                  <h2>{t.privacy}</h2>
-                  <p>{t.privacyCopy}</p>
-                  <label className="check-label">
-                    <input
-                      type="checkbox"
-                      checked={prefs.measurement_opt_in}
-                      onChange={(e) =>
-                        setPrefs({
-                          ...prefs,
-                          measurement_opt_in: e.target.checked,
-                        })
-                      }
-                    />
-                    {t.measurement}
-                  </label>
-                  <p className="micro-copy">{t.measurementHelp}</p>
-                  {prefs.measurement_opt_in && user && (
-                    <button
-                      className="button secondary"
-                      onClick={async () => {
-                        if (!tripStart) {
-                          setTripStart(new Date().toISOString());
-                        } else {
-                          try {
-                            await api("/api/trips", {
-                              actual_departure: tripStart,
-                              actual_arrival: new Date().toISOString(),
-                            });
-                            setTripStart(null);
-                            setNotice(t.tripRecorded);
-                          } catch (e) {
-                            setError(displayFailure(e, locale));
-                          }
-                        }
-                      }}
-                    >
-                      {tripStart ? t.tripEnd : t.tripStart}
-                    </button>
-                  )}
-                  <div className="settings-actions">
-                    <button className="text-button" onClick={exportRoutes}>
-                      {t.exportData}
-                    </button>
-                    <button
-                      className="text-button danger"
-                      onClick={() => {
-                        localStorage.removeItem("traffic.demoRoutes");
-                        if (demo || !user) setSaved([]);
-                        setNotice(t.clearDone);
-                      }}
-                    >
-                      {t.clearData}
-                    </button>
-                  </div>
-                </section>
-              </div>
+              <SettingsPanel locale={locale} prefs={prefs} onPrefs={value=>{setPrefs(value);if(value.locale!==locale)setLocale(value.locale);}} signedIn={Boolean(user&&!demo)} loading={prefsLoading} failed={prefsError} saving={prefsBusy} dirty={JSON.stringify(prefs)!==JSON.stringify(savedPrefs)} onRetry={()=>setRoutesReload(v=>v+1)} onSave={()=>void savePreferences()} onCancel={()=>{setPrefs({...savedPrefs});setLocale(savedPrefs.locale);}}
+                account={user?<><p><bdi>{user}</bdi></p><div className="settings-actions"><Button className="button secondary" disabled={busy} onClick={()=>{setEmail(user);setAuthMode("forgot");setAccountLinkError(false);setAuthOpen(true);}}>{locale==="ar"?accountAr.change:accountEn.change}</Button><Button className="button secondary" disabled={busy} onClick={()=>void signOutPersonal()}>{t.localSignOut}</Button></div><p className="micro-copy">{t.localSignOutHelp}</p></>:<><p>{config.authConfigured?t.signin:t.authSetup}</p><Button className="button secondary" onClick={()=>setAuthOpen(true)}>{t.signin}</Button></>}
+                website={config.privateAccess?<div className="website-actions"><form method="post" action="/private/lock" onSubmit={event=>{event.preventDefault();void lockWebsite();}}><Button className="button secondary" type="submit" disabled={busy}>{t.lockSite}</Button></form><Button className="button secondary" disabled={busy} onClick={()=>void signOutPersonal(true)}>{t.lockAndSignOut}</Button><p className="micro-copy">{t.privateAccountHelp}</p></div>:undefined}
+                push={push} pushAvailable={Boolean(config.vapidPublicKey&&user&&!demo)} onPush={()=>void(push?disablePush():enablePush())} install={installPrompt?async()=>{await installPrompt.prompt();setInstallPrompt(null);}:undefined}
+                recordingAllowed={Boolean(user&&!demo&&savedPrefs.measurement_opt_in&&!prefsLoading&&!prefsError)} tripStart={Boolean(tripStart)} onTrip={()=>void recordTrip()} onExport={exportRoutes}
+                onClearExamples={()=>{localStorage.removeItem("traffic.demoRoutes");if(demo||!user)setSaved([]);setNotice(t.clearDone);}}
+                onClearLocation={()=>{useSearchLocation.getState().setContext({countryCode:useSearchLocation.getState().countryCode});setNotice(locale==="ar"?"تم مسح موقع البحث القريب.":"Nearby-search location cleared.");}}/>
+
             </>
           )}
           {page === "admin" && (

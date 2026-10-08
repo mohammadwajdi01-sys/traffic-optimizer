@@ -1,3 +1,15 @@
+# Settings and password refinement — 8 October 2026
+
+Task 3.08 now groups Account, Journey preferences, Notifications, Privacy and Website access. Advanced buffer/timezone help, preference loading/error/retry, draft Save/Discard, saved-consent trip recording, nearby-location clear and device-example/export scope are explicit. Account saves use an expected-session check and ignore stale responses; signed-in defaults no longer inherit guest navigation/buffer defaults. Route-specific saved buffers remain intact. Recording state clears on account change.
+
+Tasks 3.05/3.06 include independent eye icons on personal password and confirmation inputs and signup/reset validation: 8+ characters, uppercase, lowercase, number and supported symbol. Login accepts existing passwords. The owner reports the previous email/reset/login checklist worked; ordinary-user delivery, backend strength configuration and real multi-account/device acceptance remain partial.
+
+Notification removal still has the existing account-wide scope, clearly described. Device-aware storage/removal and reliable reminder jobs remain tasks 3.09–3.11. This batch does not fix push delivery or the unresolved Libya/A33 ETA discrepancy. Android, map, GPS, push and traffic acceptance remain postponed until the user is ready. Backend password rules require the separately documented Supabase setting; client validation is not server enforcement. No database migration, paid provider activation, limit increase or owner/private-gate rewrite.
+
+Exact-source CI, merge and deployment evidence is recorded in the authoritative WBS after successful verification. Earlier release blocks below are historical.
+
+---
+
 # Account flow implementation — 8 October 2026
 
 Batch 3 tasks 3.05–3.06 add personal email/password signup and login, confirmation resend, secondary email links, and reset requests in English and Arabic. All redirects use the same origin's `/settings`. Passwords are transient form state; signup never sends role metadata. Google authentication and the server/database owner identity remain unchanged.
