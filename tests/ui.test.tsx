@@ -1061,3 +1061,12 @@ describe("Account preference save boundary",()=>{
     await act(async()=>finish());expect((screen.getByLabelText("Preferred navigation") as HTMLInputElement).value).toBe("google");expect(JSON.parse(localStorage.getItem("traffic.preferences")!).navigation).toBe("waze");
   });
 });
+
+
+describe("Settings language persistence",()=>{
+  it("saves the language currently shown after changing it in the header",async()=>{
+    const config={mode:"live",authConfigured:true,googleAuthEnabled:true,supabaseUrl:"https://example.supabase.co",supabaseKey:"unit-only",searchConfigured:false,trafficConfigured:false,mapConfigured:false};let saved:any;
+    auth.getSession.mockResolvedValue({data:{session:{user:{id:"person",email:"person@example.test"},access_token:"unit-only"}}} as any);
+    vi.stubGlobal("fetch",vi.fn(async(path:string,options:any={})=>{if(path==="/api/preferences"&&options.method==="PATCH")saved=JSON.parse(options.body);return {ok:true,json:async()=>path==="/api/config"?config:path==="/api/me"?{role:"user"}:path==="/api/preferences"?[{locale:"en",navigation:"ask",safety_buffer:0,measurement_opt_in:false}]:[]};}));history.replaceState(null,"","/settings");mount();const u=userEvent.setup();await waitFor(()=>expect(screen.getByLabelText("Preferred navigation").matches(":disabled")).toBe(false));await u.click(screen.getByRole("button",{name:"ع"}));await u.click(screen.getByRole("button",{name:ar.saveSettings}));await waitFor(()=>expect(saved?.locale).toBe("ar"));expect(useStore.getState().locale).toBe("ar");
+  });
+});

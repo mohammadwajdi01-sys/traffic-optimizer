@@ -614,7 +614,7 @@ export default function App() {
     if(!Number.isInteger(prefs.safety_buffer)||prefs.safety_buffer<0||prefs.safety_buffer>60) {
       setError(locale==="ar"?"اختر هامشاً من 0 إلى 60 دقيقة.":"Choose a safety buffer from 0 to 60 minutes.");return;
     }
-    const owner=user,wasDemo=demo,version=++prefsRequest.current,snapshot={...prefs,measurement_opt_in:Boolean(user&&!demo&&prefs.measurement_opt_in)};
+    const owner=user,wasDemo=demo,version=++prefsRequest.current,snapshot={...prefs,locale,measurement_opt_in:Boolean(user&&!demo&&prefs.measurement_opt_in)};
     prefsInFlight.current=true;setPrefsBusy(true);setError("");
     try {
       if(owner&&!wasDemo)await api("/api/preferences",snapshot,"PATCH",undefined,owner);
@@ -1121,7 +1121,7 @@ export default function App() {
               <div className="page-heading">
                 <h1>{t.settings}</h1>
               </div>
-              <SettingsPanel locale={locale} prefs={prefs} onPrefs={value=>{setPrefs(value);if(value.locale!==locale)setLocale(value.locale);}} signedIn={Boolean(user&&!demo)} loading={prefsLoading} failed={prefsError} saving={prefsBusy} dirty={JSON.stringify(prefs)!==JSON.stringify(savedPrefs)} onRetry={()=>setRoutesReload(v=>v+1)} onSave={()=>void savePreferences()} onCancel={()=>{setPrefs({...savedPrefs});setLocale(savedPrefs.locale);}}
+              <SettingsPanel locale={locale} prefs={prefs} onPrefs={value=>{setPrefs(value);if(value.locale!==locale)setLocale(value.locale);}} signedIn={Boolean(user&&!demo)} loading={prefsLoading} failed={prefsError} saving={prefsBusy} dirty={JSON.stringify({...prefs,locale})!==JSON.stringify(savedPrefs)} onRetry={()=>setRoutesReload(v=>v+1)} onSave={()=>void savePreferences()} onCancel={()=>{setPrefs({...savedPrefs});setLocale(savedPrefs.locale);}}
                 account={user?<><p><bdi>{user}</bdi></p><div className="settings-actions"><Button className="button secondary" disabled={busy} onClick={()=>{setEmail(user);setAuthMode("forgot");setAccountLinkError(false);setAuthOpen(true);}}>{locale==="ar"?accountAr.change:accountEn.change}</Button><Button className="button secondary" disabled={busy} onClick={()=>void signOutPersonal()}>{t.localSignOut}</Button></div><p className="micro-copy">{t.localSignOutHelp}</p></>:<><p>{config.authConfigured?t.signin:t.authSetup}</p><Button className="button secondary" onClick={()=>setAuthOpen(true)}>{t.signin}</Button></>}
                 website={config.privateAccess?<div className="website-actions"><form method="post" action="/private/lock" onSubmit={event=>{event.preventDefault();void lockWebsite();}}><Button className="button secondary" type="submit" disabled={busy}>{t.lockSite}</Button></form><Button className="button secondary" disabled={busy} onClick={()=>void signOutPersonal(true)}>{t.lockAndSignOut}</Button><p className="micro-copy">{t.privateAccountHelp}</p></div>:undefined}
                 push={push} pushAvailable={Boolean(config.vapidPublicKey&&user&&!demo)} onPush={()=>void(push?disablePush():enablePush())} install={installPrompt?async()=>{await installPrompt.prompt();setInstallPrompt(null);}:undefined}
