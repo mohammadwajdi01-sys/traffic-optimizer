@@ -11,6 +11,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "../src/App";
+import {EditSavedRoute, DeleteSavedRoute} from "../src/SavedRoutes";
 import {MapPreview} from "../src/MapPreview";
 import {mapFailure} from "../src/map-failure";
 import GuestAccess from "../src/GuestAccess";
@@ -366,14 +367,14 @@ describe("Application interactions without service credentials", () => {
         name: "Week",
       }),
     );
-    await u.click(screen.getByRole("button", { name: "Analyze seven days" }));
+    await u.click(screen.getByRole("button", { name: "Check selected days" }));
     await waitFor(() =>
       expect(document.querySelectorAll(".day-summary").length).toBe(7),
     );
     expect(document.querySelectorAll(".heat-cell").length).toBe(35);
     await u.click(screen.getByRole("button", { name: "ع" }));
     expect(document.documentElement.dir).toBe("rtl");
-    await screen.findByRole("heading", { name: "أسبوعك بازدحام أقل" });
+    await screen.findByRole("heading", { name: "رحلات أسبوعك المختبرة" });
   });
   it("does not expose active owner switches to a visitor", async () => {
     history.replaceState(null, "", "/admin");
@@ -402,7 +403,7 @@ describe("Application interactions without service credentials", () => {
         name: "Week",
       }),
     );
-    await u.click(screen.getByRole("button", { name: "Analyze seven days" }));
+    await u.click(screen.getByRole("button", { name: "Check selected days" }));
     await waitFor(() =>
       expect(document.querySelectorAll(".day-summary")).toHaveLength(7),
     );
@@ -477,7 +478,7 @@ describe("Weekly sign-in and Google login", () => {
     await waitFor(() => expect(auth.onAuthStateChange).toHaveBeenCalled());
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: "Analyze seven days" }));
+      .click(screen.getByRole("button", { name: "Check selected days" }));
     await screen.findByRole("dialog");
     expect(
       request.mock.calls.some((args: unknown[]) =>
@@ -544,10 +545,10 @@ describe("Coordinate and whole-window regressions", () => {
     await u.click(screen.getByRole("button",{name:"Save route"}));await u.type(screen.getByLabelText("Route name"),"Old route");
     await u.click(within(screen.getByRole("dialog")).getByRole("button",{name:"Save route"}));
     await u.click(within(document.querySelector(".sidebar")!).getByRole("link",{name:"Routes"}));
-    await u.click(screen.getByRole("button",{name:"Edit route"}));const dialog=within(screen.getByRole("dialog"));
+    await u.click(screen.getByLabelText("Route actions: Old route"));await u.click(screen.getByRole("button",{name:"Edit or rename"}));const dialog=within(screen.getByRole("dialog"));
     await u.clear(dialog.getByLabelText("Route name"));await u.type(dialog.getByLabelText("Route name"),"Updated route");
     await u.clear(dialog.getByLabelText("Latest arrival"));await u.type(dialog.getByLabelText("Latest arrival"),"11:00");
-    await u.click(dialog.getByRole("button",{name:"Sat"}));await u.click(dialog.getByRole("button",{name:"Save route"}));
+    await u.click(dialog.getByRole("button",{name:"Sat"}));await u.click(dialog.getByRole("button",{name:"Save changes"}));
     const rows=JSON.parse(localStorage.getItem("traffic.demoRoutes")!);expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({name:"Updated route",plan:{latestTime:"11:00",mode:"arrive_between"}});expect(rows[0].days).toContain(6);
   });
 });
@@ -617,6 +618,7 @@ describe("Quick account routes and departure choices", () => {
       requests.push({path,body});
       const json = path === "/api/config" ? {mode:"live",authConfigured:true,supabaseUrl:"https://example.supabase.co",supabaseKey:"unit-only",searchConfigured:false,trafficConfigured:true,mapConfigured:false,publicBeta:false}
         : path === "/api/routes" ? [route] : path === "/api/me" ? {role:"user"}
+        : path === "/api/analysis/allowance" ? {remaining:10}
         : path === "/api/analysis/day" ? await optimize(body, at => demoForecast(body,at))
         : path === "/api/analysis/live" ? {candidate:await demoForecast(body,new Date().toISOString()),checkedAt:new Date().toISOString()} : [];
       return {ok:true,json:async()=>json};
@@ -642,6 +644,52 @@ describe("Quick account routes and departure choices", () => {
     await u.selectOptions(screen.getByRole("combobox",{name:"Choose a checked departure"}),`${alternative.provider}:${alternative.departureAt}`);
     expect(within(screen.getByRole("region",{name:"Selected departure"})).getByText(String(Math.round(alternative.durationSeconds/60))+" min")).toBeTruthy();
     expect(within(screen.getByRole("region",{name:"Selected departure"})).getByRole("link",{name:"Google Maps"}).getAttribute("href")).toContain("origin=31.996");
+  });
+  it("opens saved route in Plan without a forecast request",async()=>{
+    const requests=accountFixture(),u=userEvent.setup();mount();
+    await screen.findByRole("option",{name:/Home to university/});
+    await u.click(within(document.querySelector(".sidebar")!).getByRole("link",{name:"Routes"}));
+    await u.click(screen.getByRole("button",{name:"Use in Plan"}));
+    expect(location.pathname).toBe("/plan");
+    expect(screen.getByRole("combobox",{name:"From"}).getAttribute("value")).toBe(route.plan.origin.displayName);
+    expect(requests.filter(r=>r.path.startsWith("/api/analysis/"))).toHaveLength(0);
+  });
+  async function selectedWeek(u:ReturnType<typeof userEvent.setup>){
+    await screen.findByRole("option",{name:/Home to university/});
+    await u.click(within(document.querySelector(".sidebar")!).getByRole("link",{name:"Week"}));
+    await u.selectOptions(screen.getByRole("combobox",{name:"Use a saved route"}),route.id);
+    const start=(screen.getByLabelText("Week starting") as HTMLInputElement).value;
+    const selected=[0,1,2].map(i=>new Date(Date.parse(start+"T12:00Z")+i*86400000).getUTCDay());
+    const group=within(screen.getByRole("group",{name:"Days to check"}));
+    for(let day=0;day<7;day++)if(!selected.includes(day))await u.click(group.getByRole("button",{name:en.dayNames[day]}));
+    return selected;
+  }
+  it("preflights only selected eligible days and preserves seven result positions",async()=>{
+    const requests=accountFixture(),u=userEvent.setup();mount();await selectedWeek(u);
+    await u.click(screen.getByRole("button",{name:"Check selected days"}));
+    await waitFor(()=>expect(requests.filter(r=>r.path==="/api/analysis/day")).toHaveLength(3));
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Check selected days"}).getAttribute("aria-busy")).toBeNull());
+    expect(document.querySelectorAll(".day-summary")).toHaveLength(7);
+    expect([...document.querySelectorAll(".day-summary small")].filter(el=>el.textContent==="Not selected")).toHaveLength(4);
+    expect(requests.filter(r=>r.path==="/api/analysis/allowance")).toHaveLength(1);
+  });
+  it("spends no forecasts on insufficient allowance or invalid bounds",async()=>{
+    const requests=accountFixture(),original=fetch,u=userEvent.setup();
+    vi.stubGlobal("fetch",vi.fn(async(path,init)=>path==="/api/analysis/allowance"?{ok:true,json:async()=>({remaining:2})}:original(path,init)));
+    mount();await selectedWeek(u);await u.click(screen.getByRole("button",{name:"Check selected days"}));
+    await screen.findByText(en.weekAllowance);expect(requests.filter(r=>r.path==="/api/analysis/day")).toHaveLength(0);
+    await u.click(screen.getByRole("button",{name:"Edit window in Plan"}));
+    await u.clear(screen.getByLabelText("Latest arrival"));await u.type(screen.getByLabelText("Latest arrival"),"07:00");
+    await u.click(within(document.querySelector(".sidebar")!).getByRole("link",{name:"Week"}));
+    await u.click(screen.getByRole("button",{name:"Check selected days"}));await screen.findByText(en.windowError);
+    expect(requests.filter(r=>r.path==="/api/analysis/day")).toHaveLength(0);
+  });
+  it.each([401,429,503])("stops the weekly sequence after blocking response %s",async(status)=>{
+    const requests=accountFixture(),original=fetch,u=userEvent.setup(),calls:unknown[]=[];
+    vi.stubGlobal("fetch",vi.fn(async(path,init)=>{if(path==="/api/analysis/day"){calls.push(path);return {ok:false,status,json:async()=>({error:"blocked"})};}return original(path,init);}));
+    mount();await selectedWeek(u);await u.click(screen.getByRole("button",{name:"Check selected days"}));
+    await waitFor(()=>expect(calls).toHaveLength(1));await waitFor(()=>expect(screen.getByRole("button",{name:"Check selected days"}).getAttribute("aria-busy")).toBeNull());
+    expect(document.querySelectorAll(".day-summary")).toHaveLength(7);expect(calls).toHaveLength(1);
   });
   it("runs Leave now on a saved account route and preserves its stored time window",async()=>{
     const requests=accountFixture(), u=userEvent.setup(); mount();
@@ -847,4 +895,22 @@ describe("Localized API recovery",()=>{
     expect(displayFailure(new TypeError("fetch failed"),"ar")).toBe(ar.networkFailure);
     expect(displayFailure(new Error("secret detail"),"en")).toBe(en.error);
   });
+});
+
+
+describe("Safe saved-route dialogs",()=>{
+ const route={id:"route-test",name:"Original",plan:defaultPlan(),days:[1,3],reminders:false};
+ it("keeps saved bounds and name unchanged on edit Cancel",async()=>{
+   const save=vi.fn(),close=vi.fn(),u=userEvent.setup();render(<EditSavedRoute route={route} locale="en" push={false} onSave={save} onClose={close}/>);
+   await u.clear(screen.getByLabelText("Route name"));await u.type(screen.getByLabelText("Route name"),"Draft name");
+   await u.clear(screen.getByLabelText("Latest arrival"));await u.type(screen.getByLabelText("Latest arrival"),"11:00");
+   await u.click(screen.getByRole("button",{name:"Cancel"}));expect(close).toHaveBeenCalledOnce();expect(save).not.toHaveBeenCalled();expect(route.name).toBe("Original");expect(route.plan.latestTime).toBe("10:00");
+ });
+ it("supports Arabic delete Cancel and safe retry after provider failure",async()=>{
+   const remove=vi.fn().mockRejectedValueOnce(new ApiFailure(503,"secret internal detail")).mockResolvedValue(undefined),close=vi.fn(),u=userEvent.setup();
+   render(<DeleteSavedRoute route={route} locale="ar" onDelete={remove} onClose={close}/>);
+   await u.click(screen.getByRole("button",{name:"إلغاء"}));expect(close).toHaveBeenCalledOnce();expect(remove).not.toHaveBeenCalled();
+   await u.click(screen.getByRole("button",{name:"حذف الرحلة"}));await screen.findByText(ar.providerFailure);expect(screen.queryByText("secret internal detail")).toBeNull();
+   await u.click(screen.getByRole("button",{name:"حذف الرحلة"}));await waitFor(()=>expect(close).toHaveBeenCalledTimes(2));
+ });
 });

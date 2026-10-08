@@ -1,0 +1,28 @@
+export const repeatEn = {
+  usePlan: "Use in Plan", routeActions: "Route actions", editRoute: "Edit or rename", deleteRoute: "Delete route", deleteHelp: "Delete this saved route? Forecasts and your other routes stay available.",
+  editHelp: "Change the saved name, time window or weekdays. Cancel keeps the saved route unchanged.",
+  everyDay: "Every day", saveChanges: "Save changes", cancel: "Cancel", noDays: "Choose at least one weekday.",
+  weekStart: "Week starting", selectedDays: "Days to check", selectedHelp: "Only selected days within the forecast horizon use your analysis allowance. Missing and unselected days remain visible.",
+  weekWindow: "Journey window", editWindow: "Edit window in Plan", checkDays: "Check selected days", noEligible: "No selected days have a valid future window within the next seven days.",
+  notSelected: "Not selected", unavailable: "Outside forecast horizon or invalid local time", waiting: "Not checked yet", failed: "Check unavailable", checking: "Checking", done: "Checked",
+  durationHelp: "Colours compare checked driving durations for this route and week. They do not measure congestion. ≈ uses a direct check within 15 minutes of the displayed time; select it to see the actual journey.",
+  shorter: "Shorter checked drive", longer: "Longer checked drive", unknown: "No usable check", exact: "Exact check", approximate: "Nearby check", axisArrival: "Arrival time", axisDeparture: "Departure time",
+  checkedTime: "Actual checked time", departure: "Departure", arrival: "Arrival", duration: "Driving time", choose: "Use this check", checkedTable: "Checked journeys for this day",
+  insightTitle: "Recurring checked departure window", insightMinimum: "Insufficient evidence: a matching 15-minute departure bucket needs checks on at least three different days.",
+  evidenceDays: "days supporting this window", checkedDays: "days with usable checks", medianDrive: "Median estimated drive", savings: "Median estimated driving-time difference", baseline: "Compared with the earliest feasible checked departure on each supporting day. This compares driving time, not waiting or actual-trip savings.",
+  fewer: "less", more: "more", noDifference: "No estimated driving-time difference", nextDay: "next day", insightLimit: "Checked samples only; this is not a minute-by-minute guarantee or a learned prediction.",
+};
+export const repeatAr: typeof repeatEn = {
+  usePlan: "استخدام في التخطيط", routeActions: "خيارات الرحلة", editRoute: "تعديل أو إعادة تسمية", deleteRoute: "حذف الرحلة", deleteHelp: "هل تريد حذف هذه الرحلة المحفوظة؟ تبقى التوقعات والرحلات الأخرى متاحة.",
+  editHelp: "عدّل الاسم أو الفترة أو أيام الأسبوع. الإلغاء يحافظ على الرحلة المحفوظة كما هي.",
+  everyDay: "كل يوم", saveChanges: "حفظ التغييرات", cancel: "إلغاء", noDays: "اختر يوماً واحداً على الأقل.",
+  weekStart: "بداية الأسبوع", selectedDays: "الأيام المطلوب فحصها", selectedHelp: "تستهلك الأيام المختارة ضمن أفق التوقع فقط من حصتك. تبقى الأيام غير المختارة والمفقودة ظاهرة.",
+  weekWindow: "فترة الرحلة", editWindow: "تعديل الفترة في التخطيط", checkDays: "فحص الأيام المختارة", noEligible: "لا توجد فترة مستقبلية صالحة للأيام المختارة خلال الأيام السبعة القادمة.",
+  notSelected: "غير مختار", unavailable: "خارج أفق التوقع أو الوقت المحلي غير صالح", waiting: "لم يُفحص بعد", failed: "التوقع غير متاح", checking: "جارٍ الفحص", done: "تم الفحص",
+  durationHelp: "تقارن الألوان مدد القيادة المختبرة لهذه الرحلة والأسبوع، ولا تقيس الازدحام. تعني ≈ توقعاً مختبراً خلال ١٥ دقيقة من الوقت الظاهر؛ اختره لرؤية الرحلة الفعلية.",
+  shorter: "قيادة مختبرة أقصر", longer: "قيادة مختبرة أطول", unknown: "لا يوجد توقع صالح", exact: "توقع في الوقت المحدد", approximate: "توقع قريب", axisArrival: "وقت الوصول", axisDeparture: "وقت الانطلاق",
+  checkedTime: "وقت التوقع المختبر الفعلي", departure: "الانطلاق", arrival: "الوصول", duration: "مدة القيادة", choose: "استخدام هذا التوقع", checkedTable: "الرحلات المختبرة لهذا اليوم",
+  insightTitle: "فترة انطلاق مختبرة متكررة", insightMinimum: "بيانات غير كافية: يلزم وجود توقعات ضمن فترة انطلاق واحدة مدتها ١٥ دقيقة في ثلاثة أيام مختلفة على الأقل.",
+  evidenceDays: "أيام تدعم هذه الفترة", checkedDays: "أيام فيها توقعات صالحة", medianDrive: "وسيط مدة القيادة المتوقعة", savings: "وسيط الفرق المتوقع في مدة القيادة", baseline: "مقارنة بأبكر انطلاق مختبر مناسب في كل يوم يدعم الفترة. المقارنة للقيادة فقط، وليست للانتظار أو توفير مقاس في رحلات فعلية.",
+  fewer: "أقل", more: "أكثر", noDifference: "لا يوجد فرق متوقع في مدة القيادة", nextDay: "اليوم التالي", insightLimit: "توقعات مختبرة فقط؛ ليست ضماناً لكل دقيقة أو تنبؤاً متعلماً.",
+};

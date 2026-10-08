@@ -1,4 +1,36 @@
 import { test, expect } from "@playwright/test";
+test("saved route editing is a draft, actions are distinct, and delete Cancel restores focus",async({page},testInfo)=>{
+  await page.goto("/");await page.getByRole("button",{name:"Try an example",exact:true}).click();
+  await page.getByRole("button",{name:"Find best time",exact:true}).click();
+  await page.getByRole("button",{name:"Save route",exact:true}).click();await page.getByLabel("Route name").fill("Repeat route");
+  await page.getByRole("dialog").getByRole("button",{name:"Save route",exact:true}).click();
+  const routes=()=>page.locator("nav").getByRole("link",{name:"Routes",exact:true}).filter({visible:true}).first();await routes().click();
+  const menu=page.getByLabel("Route actions: Repeat route");await menu.click();await page.getByRole("button",{name:"Edit or rename",exact:true}).click();
+  await page.getByLabel("Route name").fill("Unsaved draft");await page.getByLabel("Latest arrival",{exact:true}).fill("11:00");await page.getByRole("button",{name:"Cancel",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Repeat route",exact:true})).toBeVisible();await expect(menu).toBeFocused();
+  await page.getByRole("button",{name:"Use in Plan",exact:true}).click();await expect(page).toHaveURL(/\/plan$/);await expect(page.getByLabel("Latest arrival",{exact:true})).toHaveValue("10:00");await expect(page.locator(".result-panel")).toHaveCount(0);
+  await routes().click();await menu.click();await page.getByRole("button",{name:"Delete route",exact:true}).click();
+  await page.getByRole("dialog").getByRole("button",{name:"Cancel",exact:true}).click();await expect(menu).toBeFocused();
+  await page.locator(".routes-grid").screenshot({path:testInfo.outputPath("repeat-routes-en.png")});
+  await page.getByRole("button",{name:"Leave now",exact:true}).click();await expect(page).toHaveURL(/\/$/);await expect(page.getByRole("region",{name:"Selected departure",exact:true})).toBeVisible();
+  await routes().click();await menu.click();await page.getByRole("button",{name:"Delete route",exact:true}).click();await page.getByRole("dialog").getByRole("button",{name:"Delete route",exact:true}).click();await expect(page.locator(".saved-route")).toHaveCount(0);
+});
+test("selected weekdays, duration legend and exact day table work in English and Arabic",async({page},testInfo)=>{
+  await page.goto("/");await page.getByRole("button",{name:"Try an example",exact:true}).click();await page.locator("nav").getByRole("link",{name:"Week",exact:true}).filter({visible:true}).first().click();
+  const start=await page.getByLabel("Week starting").inputValue(),weekday=new Date(start+"T12:00Z").getUTCDay(),selected=[weekday,(weekday+1)%7,(weekday+2)%7];
+  const names=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  for(let i=0;i<7;i++)if(!selected.includes(i))await page.locator(".week-controls").getByRole("button",{name:names[i],exact:true}).click();
+  await page.getByRole("button",{name:"Check selected days",exact:true}).click();await expect(page.locator(".day-summary")).toHaveCount(7);await expect(page.getByRole("button",{name:"Check selected days",exact:true})).toBeEnabled();
+  await expect(page.locator(".day-summary small").filter({hasText:"Not selected"})).toHaveCount(4);
+  await expect(page.locator(".heat-legend")).toContainText("Shorter checked drive");await expect(page.locator(".heat-legend")).not.toContainText("Light traffic");
+  await expect(page.locator(".week-check-table tbody tr").first()).toBeVisible();
+  if(testInfo.project.name!=="desktop")await expect(page.locator(".week-desktop-grid")).toBeHidden();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.locator(".week-grid").screenshot({path:testInfo.outputPath("repeat-week-en.png")});
+  await page.getByRole("button",{name:"ع",exact:true}).click();await expect(page.locator("html")).toHaveAttribute("dir","rtl");await expect(page.locator(".weekly-insight")).toContainText("فترة انطلاق مختبرة متكررة");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.locator(".week-grid").screenshot({path:testInfo.outputPath("repeat-week-ar.png")});
+  await page.locator(".week-check-table tbody tr").first().getByRole("button").click();await expect(page).toHaveURL(/\/plan$/);await expect(page.locator(".result-panel")).toBeVisible();await expect(page.locator(".timeline-table tr[aria-selected=true]")).toHaveCount(1);
+});
 test("core goals, keyboard chart choices and overnight fields stay in Plan",async({page},testInfo)=>{
   await page.goto("/");
   await page.getByRole("button",{name:"Try an example",exact:true}).click();
@@ -103,7 +135,7 @@ test("weekly heatmap is computed and Arabic is RTL without horizontal overflow",
     .filter({ visible: true })
     .first()
     .click();
-  await page.getByRole("button", { name: "Analyze seven days" }).click();
+  await page.getByRole("button", { name: "Check selected days" }).click();
   await expect(page.locator(".day-summary")).toHaveCount(7);
   await expect(page.locator(".heat-cell")).toHaveCount(35);
   await page.getByRole("button", { name: "ع", exact: true }).click();
@@ -114,7 +146,7 @@ test("weekly heatmap is computed and Arabic is RTL without horizontal overflow",
     ),
   ).toBe(true);
   await expect(
-    page.getByRole("heading", { name: "أسبوعك بازدحام أقل" }),
+    page.getByRole("heading", { name: "رحلات أسبوعك المختبرة" }),
   ).toBeVisible();
 });
 test("owner controls cannot be accessed by an unsigned visitor and privacy is available", async ({

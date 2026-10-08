@@ -1786,6 +1786,35 @@ input[type="range"] {
 .selected-journey dd { margin: 0; font-weight: 600; }
 .selected-journey .navigation-row { flex-wrap: wrap; }
 .saved-route .button { margin-top: 8px; }
+.route-menu { position: relative; margin-inline-start: auto; }
+.route-menu summary { list-style: none; display: grid; place-items: center; min-width: 44px; min-height: 44px; cursor: pointer; border-radius: 8px; }
+.route-menu summary::-webkit-details-marker { display: none; }
+.route-menu > div { position: absolute; inset-inline-end: 0; top: 100%; width: 190px; z-index: 5; background: white; padding: 8px; border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
+.route-menu button { width: 100%; min-height: 44px; text-align: start; padding: 8px; border-radius: 6px; }
+.route-menu button:hover, .route-menu summary:hover { background: #edf4ff; }
+.route-primary-actions, .dialog-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.route-primary-actions > .button { flex: 1; margin-top: 0; }
+.route-editor-fields, .weekday-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.weekday-fields legend { margin-bottom: 10px; font-weight: 600; }
+.week-controls { margin: 16px 0 23px; display: grid; gap: 16px; }
+.week-controls input[type=date] { max-width: 320px; }
+.week-controls .button { justify-self: start; }
+.week-duration-panel { min-width: 0; }
+.duration-0 { background: #d7efea; color: #164e45; }
+.duration-1 { background: #b6dcd8; color: #164e45; }
+.duration-2 { background: #7fb9b9; color: #173f42; }
+.duration-3 { background: #347e85; color: white; }
+.heat-cell:disabled { cursor: default; opacity: 1; }
+.heat-legend .unknown { background: #edf1f6; }
+.week-day-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 24px 0 16px; }
+.week-day-tabs button { min-height: 44px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; }
+.week-day-tabs button[aria-pressed=true] { background: var(--blue); color: white; }
+.week-check-table { width: 100%; min-width: 480px; border-collapse: collapse; }
+.week-check-table caption { text-align: start; padding: 10px 0; }
+.week-check-table td, .week-check-table th { text-align: start; padding: 10px; border-bottom: 1px solid var(--border); }
+.weekly-insight { margin-top: 20px; padding: 16px; background: #f1f7fa; border-radius: 12px; }
+.weekly-insight p { margin-top: 10px; }
+@media(max-width:760px) { .week-desktop-grid { display: none; } .week-controls { padding: 16px; } .route-primary-actions { flex-direction: column; } }
 .map-canvas { direction: ltr; }
 .map-recovery{position:absolute;inset:0;background:#edf5fcf2}
 .map-warning{position:absolute;top:65px;inset-inline:16px;z-index:2;padding:12px;background:#fffffff0;border:1px solid #dbe6f2;border-radius:12px;font-size:14px}
