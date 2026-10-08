@@ -57,6 +57,9 @@ import { initialJourney, rerankAnalysis, recommendationAllowed } from "../shared
 import { useSearchLocation } from "./search-location";
 import GuestAccess from "./GuestAccess";
 import SignInDialog from "./SignInDialog";
+import PasswordDialog from "./PasswordDialog";
+import {accountCallback, clearAccountCallback} from "./account-auth";
+import {accountAr,accountEn} from "./account-copy";
 import { LocationField } from "./LocationField";
 import { SearchRegion } from "./SearchRegion";
 import { MapPreview } from "./MapPreview";
@@ -104,6 +107,11 @@ const devicePreferences = () => {
 };
 export default function App() {
   const queryClient = useQueryClient();
+  const callbackIntent = useRef(accountCallback(location.href));
+  const [accountLinkError,setAccountLinkError] = useState(false);
+  const [passwordAccount,setPasswordAccount] = useState<{id:string;email:string}|null>(null);
+  const [authMode,setAuthMode] = useState<"login"|"forgot">("login");
+  const recoveryAccount = useRef<string|null>(null);
   const profileMenu = useRef<HTMLDetailsElement>(null);
   const {
       locale,
@@ -176,9 +184,6 @@ export default function App() {
   const visibleSaved = savedFor === user ? saved : [];
   const accessReady = demo || Boolean(user || guestReady);
   useEffect(() => {
-    if (user) setAuthOpen(false);
-  }, [user]);
-  useEffect(() => {
     const expire = () => {setGuestReady(false); setGuestExpiresAt(null);};
     window.addEventListener("traffic-guest-expired", expire);
     return () => window.removeEventListener("traffic-guest-expired", expire);
@@ -238,15 +243,42 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (!config.authConfigured) return;
+    let active = true;
+    let authRevision = 0;
+    const a = locale === "ar" ? accountAr : accountEn;
+    if (callbackIntent.current === "invalid") {
+      clearAccountCallback();setAccountLinkError(true);setAuthMode("forgot");setAuthOpen(true);
+    }
     try { configureAuth(config); } catch { setError(t.authFailed); return; }
     if (!supabase) return;
-    supabase.auth
-      .getSession()
-      .then(({ data }) => setUser(data.session?.user.email ?? null));
-    const { data } = supabase.auth.onAuthStateChange((_event, session) =>
-      setUser(session?.user.email ?? null),
-    );
-    return () => data.subscription.unsubscribe();
+    // Register synchronously before SDK initialization finishes. Do not await SDK calls inside this callback.
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if(!active)return;
+      authRevision++;
+      setUser(session?.user.email ?? null);
+      if(recoveryAccount.current && recoveryAccount.current !== session?.user.id) {
+        recoveryAccount.current=null;setPasswordAccount(null);
+      }
+      if(event === "PASSWORD_RECOVERY" && session?.user.email) {
+        recoveryAccount.current=session.user.id;
+        setPasswordAccount({id:session.user.id,email:session.user.email});
+        setAuthOpen(false);setAuthMode("login");setAccountLinkError(false);clearAccountCallback();
+      } else if(event === "SIGNED_IN") {
+        setAuthOpen(false);setAuthMode("login");
+        if(callbackIntent.current === "confirmation") {setNotice(a.confirmed);clearAccountCallback();}
+      }
+    });
+    const revision = authRevision;
+    supabase.auth.getSession().then(({data})=>{
+      if(active && revision === authRevision)setUser(data.session?.user.email ?? null);
+    }).catch(()=>{if(active)setError(t.authFailed);});
+    supabase.auth.initialize().then(result => {
+      if(!active)return;
+      if(result.error) {
+        clearAccountCallback();setAccountLinkError(true);setAuthMode("forgot");setAuthOpen(true);
+      }
+    }).catch(()=>{if(active)setError(t.authFailed);});
+    return () => {active=false;data.subscription.unsubscribe();};
   }, [config]);
   useEffect(() => {
     cancelRequest();
@@ -1091,6 +1123,7 @@ export default function App() {
                   {user ? (
                     <>
                       <p>{user}</p>
+                      <Button className="button secondary" disabled={busy} onClick={()=>{setEmail(user);setAuthMode("forgot");setAccountLinkError(false);setAuthOpen(true);}}>{locale==="ar"?accountAr.change:accountEn.change}</Button>
                       <Button className="button secondary" disabled={busy} onClick={() => void signOutPersonal()}>{t.localSignOut}</Button>
                       <p className="micro-copy">{t.localSignOutHelp}</p>
                     </>
@@ -1344,7 +1377,8 @@ export default function App() {
       </Modal>}
       {editingRoute && <EditSavedRoute key={editingRoute.id} route={editingRoute} locale={locale} push={push} onSave={updateRoute} onClose={()=>setEditingRoute(null)}/>}
       {deletingRoute && <DeleteSavedRoute key={deletingRoute.id} route={deletingRoute} locale={locale} onDelete={()=>deleteRoute(deletingRoute)} onClose={()=>setDeletingRoute(null)}/>}
-      {authOpen && <SignInDialog config={config} email={email} onEmail={setEmail} onClose={() => setAuthOpen(false)} />}
+      {authOpen && <SignInDialog config={config} email={email} onEmail={setEmail} initialMode={authMode} linkError={accountLinkError} onClose={() => {setAuthOpen(false);setAuthMode("login");setAccountLinkError(false);}} />}
+      {passwordAccount && <PasswordDialog key={passwordAccount.id} userId={passwordAccount.id} email={passwordAccount.email} locale={locale} onClose={()=>{setPasswordAccount(null);recoveryAccount.current=null;}} onSaved={()=>{setPasswordAccount(null);recoveryAccount.current=null;setNotice(locale==="ar"?accountAr.saved:accountEn.saved);}}/>}
     </div>
   );
 }

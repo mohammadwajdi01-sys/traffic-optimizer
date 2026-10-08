@@ -1,8 +1,18 @@
+# Account flow implementation — 8 October 2026
+
+Batch 3 tasks 3.05–3.06 add personal email/password signup and login, confirmation resend, secondary email links, and reset requests in English and Arabic. All redirects use the same origin's `/settings`. Passwords are transient form state; signup never sends role metadata. Google authentication and the server/database owner identity remain unchanged.
+
+Recovery opens the password editor only after Supabase emits PASSWORD_RECOVERY with a user session. Invalid, expired or reused links clear sensitive URL context and offer a fresh request. The editor checks the account identity before updating only the password; logout/account change closes it. Change password in Settings uses the same verified-email recovery flow.
+
+The public Auth settings were read on 8 October: email signup enabled, email confirmation required, Google enabled. The current connector has no Auth redirect/SMTP management endpoint. Exact allowlist and mail transport are not claimed verified or changed. Task 3.07 remains partial until configuration and real receipt/callback evidence exist. No mail was sent by automated tests; tests use fixtures. The user is available to verify email delivery. Android, map, Libya/A33 and live traffic validation remain postponed until the user is ready.
+
+Account release automated CI/merge/deployment evidence is recorded in the authoritative WBS after successful checks. This does not establish real email delivery or full V1 acceptance. Zero budget, disabled paid/Google routing, private access, account isolation and reminder configuration are preserved.
+
 # Current implementation status — 8 October 2026
 
 Batch 3 first group implements tasks 3.01–3.04: named saved-route cards with distinct Use in Plan/Leave now actions, isolated edit drafts and accessible delete confirmation; selected-date/weekday weekly preflight under unchanged limits; relative checked-duration colours, nearby-check timestamps, unknown states and phone day tables; and three-distinct-day 15-minute bucket insights with a median earliest-feasible-check driving-time comparison. Password account flows and reminder delivery are not included in this group.
 
-The user explicitly postponed core/device/Libya validation until tomorrow and authorized continuing the next WBS on 8 October. This permits implementation of the next group, not accepted-core or full-V1 closure. A33, real Android and live email/push acceptance remain open.
+The user explicitly postponed core/device/Libya validation until the user is ready and authorized continuing the next WBS on 8 October. This permits implementation of the next group, not accepted-core or full-V1 closure. A33, real Android and live email/push acceptance remain open.
 
 Core follow-up: arrival-window-start alternatives are limited to arrival modes. Map failures retain the canvas so a later load can recover, report a safe localized failure category instead of always claiming setup is missing, and retry only on request. Arabic label-loader failures no longer destroy the map. Hosted map/provider and Android acceptance still require fresh evidence; this is not a Libya ETA accuracy fix.
 
